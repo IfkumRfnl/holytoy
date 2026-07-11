@@ -10,6 +10,7 @@ Each entry: the hallucination, the truth, the source. When in doubt, grep
 | `int main() {...}` | No main. Top-level statements run at #include time; end file with `MyDemo;` | Doc/HolyC.DD |
 | `printf(...)` | `Print(...)`, or just `"fmt",args;` as a statement | Doc/HolyC.DD |
 | `(F64)x`, `(CDC*)p` | Postfix only: `x(F64)`, `p(CDC*)` — prefix cast is a compile ERROR | Compiler/PrsExp.HC:729 |
+| `fp(U8*)` on a fn-ptr variable | Parses as a CALL through fp ("Missing expression", VM-verified). Don't cast fn ptrs — assign directly (no type checking) | — |
 | `cond ? a : b` | No ternary. Use if/else (no continue either — use goto) | Doc/HolyC.DD |
 | `continue;` | Doesn't exist. `goto` to a label at loop end | Doc/HolyC.DD |
 | `a << (b-1)` habits | `<<`/`>>`/`` ` `` bind ABOVE `*`; `& ^ |` above `+ -`; `+ -` above comparisons. Re-parenthesize all bit math | Doc/HolyC.DD precedence table |

@@ -183,6 +183,10 @@ When translating C code, re-parenthesize every expression involving `<< >> & ^ |
   implicit conversion: normal C-like int<->float conversion happens automatically in
   mixed arithmetic, assignment, and argument passing (`Doc/HolyC.DD`). Postfix casts
   are for pointer retyping and bit reinterpretation.
+  **You cannot postfix-cast a function-pointer variable**: `fp(U8 *)` parses as a CALL
+  through fp with `U8 *` as a (bad) argument — "Missing expression" compile error
+  (VM-verified). Function pointers need no cast anyway (no type checking): assign them
+  straight to an I64 or another pointer type.
 - `sizeof(x)` and `offset(Class.member)` are keywords; both accept only ONE level of
   member. Bare `Class.member` in an expression also yields the offset.
 - `defined(SYM)` works in any expression, not just `#if`.

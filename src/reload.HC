@@ -110,7 +110,11 @@ DefArgs(,7);                                              //default-arg skipping
     packed.u8[0],packed.u32[1]; }                                //sub-int access
 ExcDemo;                                                 //paren-less call + try/catch demo
 "power operator  ToI64(2`10) = %d  (expect 1024)\n",ToI64(2`10); //` yields F64
-"postfix cast  old_ptr(U8*) = %P\n",old_ptr(U8*);        //postfix typecast
+//postfix cast: NOT on a fn-ptr var (old_ptr(U8*) parses as a CALL - VM-verified);
+//use a non-callable lvalue for the bit-reinterpret demo instead:
+{ I64 bits;
+  bits(F64)=1.5;                          //lvalue postfix cast = store F64 bits in I64
+  "postfix cast  bits(F64)=1.5 -> bits=0x%X  (expect 0x3FF8000000000000)\n",bits; }
 
 //------------- VISUAL PHASE (defined AFTER redef, so its &Effect binds v2) -------------
 //------------- VISUAL PHASE (harness-mode: draw_it already hot-swapped to v2 above;

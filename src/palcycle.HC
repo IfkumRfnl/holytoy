@@ -10,11 +10,14 @@ CBGR48 palcyc_pal[COLORS_NUM];   //rainbow in [0..COLORS_NUM-2]; globals: task s
 U0 CycleTask(I64)
 {
   I64 i,j,offset=0;
+  CDC *dc=DCAlias;                        //persistent layer: tick strip proves we loop
+  dc->color=WHITE;
   while (TRUE) {
     for (i=1;i<COLORS_NUM;i++) {          //rotate 1..15, keep 0 fixed
       j=(i-1+offset)%(COLORS_NUM-1);
       GrPaletteColorSet(i,palcyc_pal[j]);
     }
+    GrPlot(dc,offset,0);                  //1 white pixel per iteration, top-left strip
     offset++;
     Sleep(50);
   }
