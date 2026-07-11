@@ -19,7 +19,7 @@ MARKER="HOLYTOY_MARKER_$$_$(date +%s)"
 TMPHC="$(mktemp -p "${TMPDIR:-/tmp}" smoke-XXXX.HC)"
 cat >"$TMPHC" <<EOF
 U8 *st="$MARKER";
-FileWrite("B:/MARKER.TXT",st,StrLen(st));
+FileWrite("E:/MARKER.TXT",st,StrLen(st));
 EOF
 if tools/run.sh "$TMPHC"; then
     export MTOOLSRC="$ROOT/images/mtools.conf"

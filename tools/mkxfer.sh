@@ -22,6 +22,12 @@ mpartition -I x:                 # wipe/init MBR
 mpartition -c -a x:              # create + activate partition spanning the disk
 mformat -F x:                    # FAT32
 
+# mpartition picks type 0x06 (FAT16) for small disks; TempleOS BlkDevAdd only
+# mounts MBR types 0x0B/0x0C/... as FAT32 (Kernel/BlkDev/DskAddDev.HC). Patch
+# the partition type byte (MBR offset 446+4) to 0x0C (FAT32 LBA).
+printf '\x0c' | dd of="$XFER" bs=1 seek=450 conv=notrunc status=none
+
+mcopy -o "$ROOT/guest/ONCE.HC" x:/ONCE.HC
 mcopy -o "$ROOT/guest/RUN.HC" x:/RUN.HC
 if [ -n "$SRC" ]; then
     mcopy -o "$SRC" x:/MAIN.HC

@@ -16,6 +16,9 @@ HOLYTOY_GUI=1 "$ROOT/tools/mkxfer.sh" $SRC
 rm -f "$OVERLAY"
 qemu-img create -q -f qcow2 -b "$GOLDEN" -F qcow2 "$OVERLAY"
 
+# Auto-answer the MBR loader's drive menu ("1" = boot C) shortly after start.
+( sleep 3; python3 "$ROOT/tools/qmp.py" "$ROOT/images/qmp-gui.sock" keys 1 2>/dev/null ) &
+
 exec "$QEMU" $ACCEL_ARGS -m "$MEM" \
     -drive file="$OVERLAY",format=qcow2,index=0,media=disk \
     -drive file="$XFER",format=raw,index=1,media=disk \

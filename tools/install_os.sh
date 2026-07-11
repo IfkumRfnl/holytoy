@@ -131,7 +131,9 @@ chmod +w "$GOLDEN"
     -qmp unix:"$SOCK",server,nowait >"$CHK/qemu-p2.log" 2>&1 &
 QPID=$!
 
-sleep 8
+sleep 3
+QMP keys 1                         # TempleOS MBR loader menu: "1. Drive C"
+sleep 5
 wait_quiet hdboot 2 90             # first HD boot: TipOfDay + "Take Tour"
 QMP keys n; sleep 2                # decline tour → shell
 QMP screendump "$CHK/p2-shell.png" || true

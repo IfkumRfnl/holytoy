@@ -44,6 +44,14 @@ QPID=$!
 cleanup() { kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null; }
 trap cleanup EXIT
 
+# TempleOS's MBR loader stops at a drive menu; "1" = boot C. Sent twice for
+# timing slack — early presses wait in the BIOS keyboard buffer, and a
+# duplicate is swallowed harmlessly by the guest's input queue.
+sleep 3
+python3 "$ROOT/tools/qmp.py" "$SOCK" keys 1 2>/dev/null || true
+sleep 2
+python3 "$ROOT/tools/qmp.py" "$SOCK" keys 1 2>/dev/null || true
+
 # Rolling screendumps; the guest reboots itself when done (-no-reboot => exit).
 sleep "$BOOT_GRACE"
 START=$SECONDS
@@ -70,6 +78,14 @@ trap - EXIT
 export MTOOLSRC="$ROOT/images/mtools.conf"
 mcopy -o x:/LOG.TXT  "$GUEST_LOG"    2>/dev/null || true
 mcopy -o x:/STAT.TXT "$OUT/status"   2>/dev/null || true
+
+# The guest log is a DolDoc dump ($...$ control codes) — strip to plain text.
+STRIP="$ROOT/skills/holyc/scripts/strip_doldoc.py"
+if [ -f "$GUEST_LOG" ] && [ -f "$STRIP" ]; then
+    python3 "$STRIP" <"$GUEST_LOG" 2>/dev/null |
+        tr -d '\000-\010\013\014\016-\037' >"$GUEST_LOG.tmp" &&
+        mv -f "$GUEST_LOG.tmp" "$GUEST_LOG"
+fi
 
 STATUS="$(tr -d '\r\0' <"$OUT/status" 2>/dev/null | head -1 || true)"
 
