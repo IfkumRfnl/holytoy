@@ -34,6 +34,11 @@ mcopy -o "$ROOT/guest/RUN.HC" x:/RUN.HC
 if [ -n "$SRC" ]; then
     mcopy -o "$SRC" x:/MAIN.HC
 fi
+mcopy -o "$ROOT/src/holytoy/HTMATH.HC" x:/HTMATH.HC
+# Transpiled shader for the app: HT.HC compiles it at startup when present.
+if [ -n "${HOLYTOY_SHADER:-}" ]; then
+    mcopy -o "$HOLYTOY_SHADER" x:/SHADER.HC
+fi
 # GUI marker: tells RUN.HC to leave the guest running instead of rebooting.
 if [ -n "${HOLYTOY_GUI:-}" ]; then
     echo gui | mcopy -o - x:/GUI.TXT
