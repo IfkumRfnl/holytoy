@@ -7,10 +7,13 @@
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat 74e018b..HEAD -- src/ docs/VISION.md config.sh`
-> If any in-scope file changed since this plan was written, compare the
-> "Current state" excerpts against the live code before proceeding; on a
-> mismatch, treat it as a STOP condition.
+> **Drift check (run first)**: `git diff --stat 091deb4..HEAD -- src/ docs/VISION.md config.sh`
+> If any in-scope file changed since this plan's verification refresh, compare
+> the "Current state" excerpts against the live code before proceeding; on a
+> mismatch, treat it as a STOP condition. (Planned at `74e018b`; verification
+> commands refreshed after plan 005 replaced global `out/` artifacts with
+> per-run `RUN_DIR` directories and plan 002 landed `src/holytoy/HT.HC` —
+> the app that will adopt this plan's HTMATH library.)
 
 ## Status
 
@@ -63,13 +66,19 @@ plan 002's app builds on.
   a working sine-ramp palette, and VISION.md:86-91).
 
 - How results get to the host: anything the guest prints lands in the task
-  Doc, which `guest/RUN.HC` dumps to `E:/LOG.TXT` → `out/guest.log`
+  Doc, which `guest/RUN.HC` dumps to `E:/LOG.TXT` → the run's `guest.log`
   (DolDoc codes stripped). So the benchmark just prints lines like
-  `"BENCH f64 %d ms/frame\n",ms;` and the host greps them.
+  `"BENCH f64 %d ms/frame\n",ms;` and the host greps them. Post plan 005
+  there are NO global `out/` artifact paths: each run prints its result
+  directory as the first stdout line (`RUN_DIR=...`). For scripted
+  verification, reserve the directory yourself:
+  `RD="$(mktemp -d "$PWD/out/runs/verify-003-XXXXXX")";
+  RUN_DIR="$RD" tools/run.sh src/bench-math.HC` (new/empty direct child of
+  `out/runs/`; directories are single-use — fresh `$RD` per run).
 
 - Guest-code rules (AGENTS.md): ASCII only; the host filename doesn't need
   8.3 (mkxfer renames the source to `MAIN.HC`); a hard fault = debugger =
-  host exit 2 with a register dump in `out/screen.txt`.
+  host exit 2 with a register dump in the run's `screen.txt`.
 
 - `RUN_TIMEOUT=90` seconds (`config.sh`) bounds the whole VM cycle; a
   benchmark comfortably fits if each variant renders ~30 frames.
@@ -80,12 +89,15 @@ plan 002's app builds on.
 
 ## Commands you will need
 
+All run commands below assume a fresh reserved run directory:
+`RD="$(mktemp -d "$PWD/out/runs/verify-003-XXXXXX")"` (new `$RD` per run).
+
 | Purpose | Command | Expected on success |
 |---------|---------|---------------------|
-| Run benchmark | `make run SRC=src/bench-math.HC` | exit 0 |
-| Read results | `grep '^BENCH' out/guest.log` | one line per variant |
-| Accuracy gate | `grep 'BENCH maxerr OK' out/guest.log` | match |
-| Regression | `make test` | all proofs pass |
+| Run benchmark | `RUN_DIR="$RD" tools/run.sh src/bench-math.HC` | exit 0, artifacts in `$RD` |
+| Read results | `grep '^BENCH' "$RD/guest.log"` | one line per variant |
+| Accuracy gate | `grep 'BENCH maxerr OK' "$RD/guest.log"` | match |
+| Regression | `make test` | `6 passed, 0 failed` |
 
 ## Suggested executor toolkit
 
@@ -132,8 +144,8 @@ with `tS` around the whole batch. Print
 `"BENCH f64_640 %d ms/frame\n"` with the integer average. Then the same at
 160×120 with 4×4 block fill (VISION.md:83-85), printed as `f64_160`.
 
-**Verify**: `make run SRC=src/bench-math.HC` → exit 0;
-`grep -c '^BENCH f64' out/guest.log` → 2.
+**Verify**: fresh `$RD`; `RUN_DIR="$RD" tools/run.sh src/bench-math.HC` →
+exit 0; `grep -c '^BENCH f64' "$RD/guest.log"` → 2.
 
 ### Step 2: LUT sin/cos in fixed point, both candidate formats
 
@@ -148,9 +160,9 @@ over ≥10k sample angles, computed in the guest; print
 (a generous bound for a 4096-entry table with no interpolation — if you add
 linear interpolation, tighten and note it), else print `... FAIL`.
 
-**Verify** (after pasting into the benchmark per Scope note):
-`make run SRC=src/bench-math.HC` → exit 0; `grep 'BENCH maxerr' out/guest.log`
-shows `OK`.
+**Verify** (after pasting into the benchmark per Scope note): fresh `$RD`;
+`RUN_DIR="$RD" tools/run.sh src/bench-math.HC` → exit 0;
+`grep 'BENCH maxerr' "$RD/guest.log"` shows `OK`.
 
 ### Step 3: Fixed-point plasma variants, measured
 
@@ -163,10 +175,10 @@ LUT-vs-F64 delta is not masked). Print one `BENCH` line per variant at
 frame and one LUT frame into two halves of the screen at the same `t` so
 the final screenshot shows them side by side.
 
-**Verify**: `make run SRC=src/bench-math.HC` → exit 0;
-`grep -c '^BENCH' out/guest.log` ≥ 7 (2 f64 + maxerr + ≥4 fixed variants);
-`out/latest.png` shows the split-screen parity frame (eyeball it; they
-should look alike).
+**Verify**: fresh `$RD`; `RUN_DIR="$RD" tools/run.sh src/bench-math.HC` →
+exit 0; `grep -c '^BENCH' "$RD/guest.log"` ≥ 7 (2 f64 + maxerr + ≥4 fixed
+variants); `$RD/latest.png` shows the split-screen parity frame (eyeball
+it; they should look alike).
 
 ### Step 4: Record the decision
 
@@ -200,11 +212,11 @@ default" is a valid decision; record the reasoning.
 
 Machine-checkable. ALL must hold:
 
-- [ ] `make run SRC=src/bench-math.HC` exits 0
-- [ ] `grep '^BENCH' out/guest.log` shows ≥7 lines incl. `maxerr ... OK`
+- [ ] fresh `$RD`: `RUN_DIR="$RD" tools/run.sh src/bench-math.HC` exits 0
+- [ ] `grep '^BENCH' "$RD/guest.log"` shows ≥7 lines incl. `maxerr ... OK`
 - [ ] `docs/notes/perf-floor.md` exists with the numbers table and a Decision section
 - [ ] `src/holytoy/HTMATH.HC` exists, ASCII-only (`LC_ALL=C grep -P '[^\x00-\x7F]' src/holytoy/HTMATH.HC` → no output)
-- [ ] `make test` exits 0 (no regressions)
+- [ ] `make test` exits 0 (`6 passed, 0 failed`, no regressions)
 - [ ] `git status` shows nothing modified outside the in-scope list
 - [ ] `plans/README.md` status row updated
 
@@ -213,8 +225,8 @@ Machine-checkable. ALL must hold:
 Stop and report back (do not improvise) if:
 
 - The benchmark exceeds `RUN_TIMEOUT` (host exit 2) even after cutting N to
-  10 frames — report the partial `BENCH` lines from `out/guest.log`.
-- A hard fault (register dump in `out/screen.txt`) persists after checking
+  10 frames — report the partial `BENCH` lines from the run's `guest.log`.
+- A hard fault (register dump in the run's `screen.txt`) persists after checking
   table-index bounds — fixed-point indexing bugs fault easily in ring 0;
   report the dump.
 - The accuracy self-check FAILs after two fix attempts.
