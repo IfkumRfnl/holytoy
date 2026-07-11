@@ -40,9 +40,10 @@ No root, no KVM required (used automatically if present).
 ```sh
 make fetch-iso    # grab TempleOS 5.03 from templeos.org (~17 MB)
 make golden       # install TempleOS into images/golden.qcow2, unattended
-make test         # prove the loop end-to-end (5 tests)
+make test         # prove the loop end-to-end (9 tests)
 
 make run SRC=src/gradient.HC     # one cycle -> prints an isolated RUN_DIR
+make run SRC=tests/glsl/plasma.glsl   # a Shadertoy-style GLSL shader, live in the app
 make watch SRC=src/gradient.HC   # re-run on every save
 make gui SRC=src/gradient.HC     # live QEMU window, toy auto-runs
 ```
@@ -84,15 +85,25 @@ troubleshooting, golden-image surgery — lives in
 
 ## Proven by `make test`
 
-A host-only preflight first proves allocation/pruning atomicity and isolates
-individual deletion failures. Then five real TempleOS VM proofs run:
+A host-only preflight first proves allocation/pruning atomicity, isolates
+individual deletion failures, and runs the GLSL transpiler's unit tests.
+Then nine real TempleOS VM proofs run:
 
 1. a marker string round-trips host → guest → host;
 2. the gradient renders at 640×480 with 16 colors, screenshot verified;
 3. a deliberate syntax error surfaces the TempleOS compiler message on
    the host with a nonzero exit;
 4. animated plasma produces distinct trailing frames and a GIF;
-5. two simultaneous VMs retain isolated markers, disks, and slot numbers.
+5. two simultaneous VMs retain isolated markers, disks, and slot numbers;
+6. the HolyToy app hot-swaps shaders live, survives a bad compile with
+   the previous shader still animating, passes its fixed-point math
+   check, and shows a per-frame shading-time readout on screen;
+7. a GLSL fragment shader transpiled to HolyC renders standalone,
+   screenshot verified;
+8. a `.glsl` file handed to the runner is transpiled, injected into the
+   app, and animates in its viewport;
+9. a host-injected mouse move lands on a target pixel (±16) and the
+   guest observes the click.
 
 ## Credits
 

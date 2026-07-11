@@ -48,7 +48,8 @@ Diagnostics carry `file:line:`; the emitter refuses instead of guessing.
   `iMouse` (vec4, zw=0.0), `iFrame` (int). They are emitted as `ht_*`
   globals refreshed at `MainImage` entry, so user functions can read them.
   The static runner supplies iTime=0, iFrame=0, iMouse=0 (`iMouse`-driven
-  fixtures need harness mouse injection — deferred, see plans/README.md).
+  shaders run live in the app, where the harness can move the real mouse:
+  `tools/qmp.py ... mouse-to X Y`).
 - `mod()` uses GLSL floor semantics (`a-b*Floor(a/b)`), not C `fmod`.
 - The static runner quantizes `fragColor` to a 16-step grayscale palette by
   luminance (`0.299r+0.587g+0.114b -> 0..15`); palette-fitting color
@@ -75,12 +76,24 @@ HolyC, exactly:
 
 Every helper added to the preamble is future port surface — keep it small.
 
-## Harness integration status
+## Harness integration status (plan 006)
 
-- `--runner static` output runs under `make run` today (one static frame,
-  draw_it blit, `--scale 4` default -> 160x120 MainImage evaluations).
-- `--runner none` emits only preamble + user functions + MainImage — the
-  shape plan 002's app will inject per recompile.
-- The three fixture e2e runs are **not** in `make test`: each costs a
-  ~20 s VM cycle and the transpiler has no in-repo consumers yet. Revisit
-  when plan 002 integrates GLSL input.
+- `make test` now covers the transpiler end to end: a host-only preflight
+  runs the 50 unit tests (exit 2 on failure, no VM cost), proof 7 renders
+  `tests/glsl/gradient.glsl` standalone via `--runner static`
+  (640x480, >=8 colors), and proof 8 drives `tests/glsl/plasma.glsl`
+  through the `.glsl` app path (`HT GLSL OK` + >=3 distinct trailing
+  frames). `circle.glsl` stays manual-only — redundant coverage, one VM
+  cycle saved.
+- `--runner none` output has an in-repo consumer: `tools/run.sh` and
+  `tools/gui.sh` accept a `.glsl` SRC, transpile it to `RUN_DIR/shader.HC`
+  (`holy_prepare_glsl`, tools/run-common.sh), and ship it as
+  `E:/SHADER.HC`; `src/holytoy/HT.HC` reads and compiles it at startup
+  through the same `HtRecompile` path used for live edits (verbatim
+  injection, no transpiler changes — VM-probed JIT redefinition).
+- `--runner static` output still runs standalone under `make run` (one
+  static frame, draw_it blit, `--scale 4` default -> 160x120 MainImage
+  evaluations).
+- The host `.glsl` pipeline is dev tooling and the proof mechanism, not
+  the shipped product surface — the v1 input box takes GLSL directly in
+  the guest (docs/VISION.md); the in-guest transpiler port is plan 007.

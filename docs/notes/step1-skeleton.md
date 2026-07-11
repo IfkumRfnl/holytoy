@@ -85,15 +85,20 @@ pointer-free.
 
 ## What step 1 still lacks (deliberate)
 
-- Real editing: cursor movement, mid-buffer insertion/deletion, mouse
-  (needs QMP `input-send-event` host-side for testability, see
-  plans/README.md deferred list).
+- Real editing: cursor movement, mid-buffer insertion/deletion, mouse-driven
+  editing — still open. (The host-side prerequisite landed in plan 006:
+  `tools/qmp.py mouse-rel/mouse-btn/mouse-to` inject real PS/2 mouse input,
+  proven by the `mouse` proof in `make test`; the pane just doesn't use the
+  mouse yet.)
 - Inline error text: the status line shows `COMPILE ERR [Compiler]`; the
   full LexExcept message (with line number) goes to the task doc /
   `guest.log`, not the pane. Capturing it needs a doc-tail grab or a
   LexExcept-side hook — follow-up.
-- Render-scale toggle and ms/frame readout — plan 003.
-- LUT/fixed-point math — plan 003.
+- Render-scale toggle — still open. The ms/frame readout landed in plan
+  006 (pane header times the shading loop only, whole ms).
+- LUT/fixed-point math — landed: plan 003 built `HTMATH.HC`, plan 006
+  wired it into the app (`#include "E:/HTMATH.HC"`, F3 fixed-point plasma
+  sample, `HT MATH OK` self-test marker).
 - Palette control per shader (samples use the std palette so UI colors
   stay stable; plasma.HC-style palette ramps are a step-4 polish item).
 - Shader load/save on the transfer disk — VISION step 4.

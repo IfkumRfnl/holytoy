@@ -9,9 +9,10 @@ The product spec is [docs/VISION.md](docs/VISION.md); the pitch is
 ```
 make golden                      # one-time: ISO -> installed golden image (~1-2 min, unattended)
 make run SRC=src/gradient.HC     # one cycle (~20 s): inject, boot, screenshot, extract logs
+make run SRC=tests/glsl/foo.glsl # .glsl: transpiled host-side, runs inside the HolyToy app
 make watch SRC=...               # re-run on every save
 make gui [SRC=...]               # visible QEMU window (WSLg); guest stays up, no auto-reboot
-make test                        # the five proofs (must stay green)
+make test                        # the nine proofs (must stay green)
 make fetch-iso                   # (re)download images/TempleOS.ISO
 make clean                       # remove run artifacts; never touches the golden image
 ```
@@ -79,6 +80,24 @@ screendumps kept the last frame; mtools pulls STAT/LOG off xfer.img
 Boot detail: the TempleOS MBR loader blocks on a drive menu each boot;
 run.sh/gui.sh/install_os.sh answer it with blind `1` keypresses (the BIOS
 keyboard buffer holds early presses, duplicates are harmless).
+
+GLSL sources: when SRC ends in `.glsl`, run.sh/gui.sh transpile it with
+`tools/glsl2hc.py --runner none` to `RUN_DIR/shader.HC` (retained as a
+debugging artifact), export `HOLYTOY_SHADER`, and retarget the run at
+`src/holytoy/HT.HC` (`holy_prepare_glsl`, tools/run-common.sh). A
+transpile failure exits 1 before any VM boots, diagnostic on stderr.
+mkxfer.sh ships `HOLYTOY_SHADER` (any `--runner none` .HC works) as
+`E:/SHADER.HC`; the app compiles it at startup and prints `HT GLSL OK`
+or `HT GLSL FAIL` to guest.log. mkxfer.sh also always ships
+`src/holytoy/HTMATH.HC` as `E:/HTMATH.HC` — HT.HC `#include`s it.
+
+Driving a live VM: `python3 tools/qmp.py RUN_DIR/qmp.sock VERB ...` —
+keyboard (`keys`/`type`/`typefile`), `screendump`, and mouse injection:
+`mouse-rel DX DY` (raw PS/2 counts, chunked/paced), `mouse-btn
+left|right down|up`, `mouse-to X Y` (slam to the top-left edge anchor,
+then `QMP_MOUSE_COUNTS_PER_PX` counts per pixel — default 2 because the
+golden image boots `ms_hard.scale=0.5`; landings are accurate to about
++-16 px, so callers must assert with tolerance).
 
 ## Guest-code rules (violating these cost real debugging time)
 
