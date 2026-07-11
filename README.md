@@ -40,9 +40,9 @@ No root, no KVM required (used automatically if present).
 ```sh
 make fetch-iso    # grab TempleOS 5.03 from templeos.org (~17 MB)
 make golden       # install TempleOS into images/golden.qcow2, unattended
-make test         # prove the loop end-to-end (3 tests)
+make test         # prove the loop end-to-end (5 tests)
 
-make run SRC=src/gradient.HC     # one cycle -> out/latest.png
+make run SRC=src/gradient.HC     # one cycle -> prints an isolated RUN_DIR
 make watch SRC=src/gradient.HC   # re-run on every save
 make gui SRC=src/gradient.HC     # live QEMU window, toy auto-runs
 ```
@@ -73,9 +73,10 @@ a fresh overlay of the golden TempleOS image headless, where a tiny boot
 hook mounts the disk and executes your code under `try/catch`; the guest
 writes status and logs back to the disk, holds the picture for the
 screenshot, and reboots — which, with `-no-reboot`, is how the VM says
-"done". The harness even OCRs the screen (TempleOS's fixed 8×8 kernel
-font makes it pixel-exact) so tools — and AI agents — can *read* the
-Temple: `out/screen.txt`.
+"done". The command prints the run directory containing `latest.png`, logs,
+frames, and its transfer disk. The harness even OCRs the screen (TempleOS's
+fixed 8×8 kernel font makes it pixel-exact) so tools — and AI agents — can
+*read* the Temple in that run's `screen.txt`.
 
 Everything operational — exit codes, artifact paths, guest-side rules,
 troubleshooting, golden-image surgery — lives in
@@ -83,10 +84,15 @@ troubleshooting, golden-image surgery — lives in
 
 ## Proven by `make test`
 
+A host-only preflight first proves allocation/pruning atomicity and isolates
+individual deletion failures. Then five real TempleOS VM proofs run:
+
 1. a marker string round-trips host → guest → host;
 2. the gradient renders at 640×480 with 16 colors, screenshot verified;
 3. a deliberate syntax error surfaces the TempleOS compiler message on
-   the host with a nonzero exit.
+   the host with a nonzero exit;
+4. animated plasma produces distinct trailing frames and a GIF;
+5. two simultaneous VMs retain isolated markers, disks, and slot numbers.
 
 ## Credits
 

@@ -1,78 +1,147 @@
 #!/usr/bin/env bash
-# holytoy proof suite. Four round-trips through the real VM:
-#   1. smoke     guest writes a marker string back to the host
-#   2. gradient  screenshot contains an actual multi-color gradient
-#   3. error     deliberate HolyC syntax error -> nonzero exit, message on host
-#   4. animate   plasma yields distinct trailing frames + out/anim.gif
-# Exit 0 only if all four behave.
+# holytoy proof suite. Five round-trips through the real VM:
+#   1. smoke      guest marker round-trip
+#   2. gradient   screenshot dimensions and colors
+#   3. error      guest compiler failure surfaces as exit 1
+#   4. animate    plasma produces distinct frames and a GIF
+#   5. parallel   simultaneous VMs keep disks/artifacts isolated
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
 cd "$ROOT"
 
-PASS=0; FAIL=0
-ok()   { echo "PASS: $1"; PASS=$((PASS+1)); }
-bad()  { echo "FAIL: $1" >&2; FAIL=$((FAIL+1)); }
+tools/test-run-locks.sh || exit 2
+
+[[ "$MAX_RUNS" =~ ^[0-9]+$ ]] && (( MAX_RUNS >= 2 )) || {
+    echo "test.sh: MAX_RUNS must be at least 2 for the parallel proof" >&2
+    exit 2
+}
+
+PASS=0
+FAIL=0
+ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
+bad() { echo "FAIL: $1" >&2; FAIL=$((FAIL + 1)); }
+new_run_path() {
+    printf '%s/test-%s-%s-%s\n' \
+        "$RUNS" "$(date -u +%Y%m%d-%H%M%S)" "$$" "$1"
+}
+
+TMP_SMOKE=""
+TMP_PARALLEL_A=""
+TMP_PARALLEL_B=""
+cleanup_sources() {
+    rm -f -- "$TMP_SMOKE" "$TMP_PARALLEL_A" "$TMP_PARALLEL_B"
+}
+trap cleanup_sources EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 MARKER="HOLYTOY_MARKER_$$_$(date +%s)"
-
-# ── 1. smoke: marker round-trip ─────────────────────────────────────────
-TMPHC="$(mktemp -p "${TMPDIR:-/tmp}" smoke-XXXX.HC)"
-cat >"$TMPHC" <<EOF
+TMP_SMOKE="$(mktemp -p "${TMPDIR:-/tmp}" smoke-XXXX.HC)"
+cat >"$TMP_SMOKE" <<EOF
 U8 *st="$MARKER";
 FileWrite("E:/MARKER.TXT",st,StrLen(st));
 EOF
-if tools/run.sh "$TMPHC"; then
-    export MTOOLSRC="$ROOT/images/mtools.conf"
-    GOT="$(mtype x:/MARKER.TXT 2>/dev/null | tr -d '\r\0')"
+
+# 1. smoke: marker round-trip
+RD="$(new_run_path smoke)"
+if RUN_DIR="$RD" tools/run.sh "$TMP_SMOKE"; then
+    GOT="$(MTOOLSRC="$RD/mtools.conf" mtype x:/MARKER.TXT 2>/dev/null | tr -d '\r\0')"
     if [ "$GOT" = "$MARKER" ]; then
         ok "smoke: marker round-tripped host->guest->host"
     else
-        bad "smoke: marker mismatch (got '$GOT')"
+        bad "smoke: marker mismatch (got '$GOT'; run $RD)"
     fi
 else
-    bad "smoke: run.sh exited $? (see $GUEST_LOG)"
+    RC=$?
+    bad "smoke: run.sh exited $RC (run $RD)"
 fi
-rm -f "$TMPHC"
 
-# ── 2. gradient: screenshot shows a gradient ────────────────────────────
-if tools/run.sh src/gradient.HC; then
-    INFO="$(python3 tools/imginfo.py "$LATEST_PNG" 2>/dev/null || echo "0 0 0")"
+# 2. gradient: screenshot shows a gradient
+RD="$(new_run_path gradient)"
+if RUN_DIR="$RD" tools/run.sh src/gradient.HC; then
+    INFO="$(python3 tools/imginfo.py "$RD/latest.png" 2>/dev/null || echo "0 0 0")"
     read -r W H NCOLORS <<<"$INFO"
     if [ "$W" = 640 ] && [ "$H" = 480 ] && [ "$NCOLORS" -ge 8 ]; then
-        ok "gradient: $LATEST_PNG is ${W}x${H} with $NCOLORS colors"
+        ok "gradient: $RD/latest.png is ${W}x${H} with $NCOLORS colors"
     else
-        bad "gradient: screenshot looks wrong (${W}x${H}, $NCOLORS colors)"
+        bad "gradient: screenshot looks wrong (${W}x${H}, $NCOLORS colors; run $RD)"
     fi
 else
-    bad "gradient: run.sh exited $?"
+    RC=$?
+    bad "gradient: run.sh exited $RC (run $RD)"
 fi
 
-# ── 3. error: syntax error surfaces on host with exit 1 ────────────────
-tools/run.sh tests/syntax-error.HC
+# 3. error: syntax error surfaces on host with exit 1
+RD="$(new_run_path error)"
+RUN_DIR="$RD" tools/run.sh tests/syntax-error.HC
 RC=$?
 if [ "$RC" = 1 ]; then
-    if grep -qi "err\|compile\|except" "$GUEST_LOG" 2>/dev/null; then
-        ok "error: exit 1 and compiler message in $GUEST_LOG"
+    if grep -qi "err\|compile\|except" "$RD/guest.log" 2>/dev/null; then
+        ok "error: exit 1 and compiler message in $RD/guest.log"
     else
-        bad "error: exit 1 but no error text in $GUEST_LOG"
+        bad "error: exit 1 but no error text in $RD/guest.log"
     fi
 else
-    bad "error: expected exit 1, got $RC"
+    bad "error: expected exit 1, got $RC (run $RD)"
 fi
 
-# ── 4. animate: plasma yields distinct trailing frames + GIF ───────────
-if tools/run.sh src/plasma.HC; then
-    DISTINCT=$(ls "$OUT"/frames/frame-*.png 2>/dev/null | tail -n 6 |
-               xargs -r md5sum | awk '{print $1}' | sort -u | wc -l)
-    if [ "$DISTINCT" -ge 3 ] && [ -f "$OUT/anim.gif" ]; then
-        ok "animate: $DISTINCT distinct trailing frames and $OUT/anim.gif"
+# 4. animate: plasma yields distinct trailing frames and GIF
+RD="$(new_run_path animate)"
+if RUN_DIR="$RD" tools/run.sh src/plasma.HC; then
+    frame_files=("$RD"/frames/frame-*.png)
+    if [ -e "${frame_files[0]}" ]; then
+        DISTINCT="$(printf '%s\0' "${frame_files[@]}" | tail -z -n 6 |
+            xargs -0 -r md5sum | awk '{print $1}' | sort -u | wc -l)"
     else
-        bad "animate: need >=3 distinct frames and anim.gif (got DISTINCT=$DISTINCT)"
+        DISTINCT=0
+    fi
+    if [ "$DISTINCT" -ge 3 ] && [ -f "$RD/anim.gif" ]; then
+        ok "animate: $DISTINCT distinct trailing frames and $RD/anim.gif"
+    else
+        bad "animate: need >=3 distinct frames and anim.gif (got $DISTINCT; run $RD)"
     fi
 else
-    bad "animate: run.sh exited $?"
+    RC=$?
+    bad "animate: run.sh exited $RC (run $RD)"
 fi
 
-echo "── $PASS passed, $FAIL failed ──"
+# 5. parallel isolation: two live VMs use different slots and transfer disks
+PARALLEL_A="PARALLEL_A_$$_$(date +%s)"
+PARALLEL_B="PARALLEL_B_$$_$(date +%s)"
+TMP_PARALLEL_A="$(mktemp -p "${TMPDIR:-/tmp}" parallel-a-XXXX.HC)"
+TMP_PARALLEL_B="$(mktemp -p "${TMPDIR:-/tmp}" parallel-b-XXXX.HC)"
+cat >"$TMP_PARALLEL_A" <<EOF
+U8 *st="$PARALLEL_A";
+FileWrite("E:/MARKER.TXT",st,StrLen(st));
+EOF
+cat >"$TMP_PARALLEL_B" <<EOF
+U8 *st="$PARALLEL_B";
+FileWrite("E:/MARKER.TXT",st,StrLen(st));
+EOF
+
+RD_A="$(new_run_path parallel-a)"
+RD_B="$(new_run_path parallel-b)"
+RUN_DIR="$RD_A" tools/run.sh "$TMP_PARALLEL_A" &
+PID_A=$!
+RUN_DIR="$RD_B" tools/run.sh "$TMP_PARALLEL_B" &
+PID_B=$!
+wait "$PID_A"
+RC_A=$?
+wait "$PID_B"
+RC_B=$?
+
+GOT_A="$(MTOOLSRC="$RD_A/mtools.conf" mtype x:/MARKER.TXT 2>/dev/null | tr -d '\r\0')"
+GOT_B="$(MTOOLSRC="$RD_B/mtools.conf" mtype x:/MARKER.TXT 2>/dev/null | tr -d '\r\0')"
+SLOT_A="$(tr -d '[:space:]' 2>/dev/null <"$RD_A/slot" || true)"
+SLOT_B="$(tr -d '[:space:]' 2>/dev/null <"$RD_B/slot" || true)"
+if [ "$RC_A" = 0 ] && [ "$RC_B" = 0 ] &&
+   [ "$GOT_A" = "$PARALLEL_A" ] && [ "$GOT_B" = "$PARALLEL_B" ] &&
+   [ -n "$SLOT_A" ] && [ -n "$SLOT_B" ] && [ "$SLOT_A" != "$SLOT_B" ]; then
+    ok "parallel: isolated markers on simultaneous slots $SLOT_A and $SLOT_B"
+else
+    bad "parallel: rc=$RC_A/$RC_B marker='$GOT_A'/'$GOT_B' slot=$SLOT_A/$SLOT_B (runs $RD_A $RD_B)"
+fi
+
+echo "-- $PASS passed, $FAIL failed --"
 [ "$FAIL" = 0 ]

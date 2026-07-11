@@ -26,6 +26,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 SOCK="$ROOT/images/qmp-install.sock"
 CHK="$OUT/install"
+XFER="$CHK/xfer.img"
 QMP() { python3 "$ROOT/tools/qmp.py" "$SOCK" "$@"; }
 export QMP_KEY_DELAY=0.06   # a little slack so typed HolyC never outruns the shell
 
@@ -105,7 +106,7 @@ fi
 echo "=== Phase 2: inject guest/ONCE.HC boot hook ==="
 [ -f "$GOLDEN" ] || { echo "install_os.sh: no golden image for --hook-only" >&2; exit 2; }
 chmod +w "$GOLDEN"
-"$ROOT/tools/mkxfer.sh"            # transfer disk carrying ONCE.HC
+"$ROOT/tools/mkxfer.sh" "$XFER"    # transfer disk carrying ONCE.HC
 
 "$QEMU" $ACCEL_ARGS -m "$MEM" \
     -drive file="$GOLDEN",format=qcow2,index=0,media=disk \

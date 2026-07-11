@@ -11,40 +11,58 @@ make golden                      # one-time: ISO -> installed golden image (~1-2
 make run SRC=src/gradient.HC     # one cycle (~20 s): inject, boot, screenshot, extract logs
 make watch SRC=...               # re-run on every save
 make gui [SRC=...]               # visible QEMU window (WSLg); guest stays up, no auto-reboot
-make test                        # the four proofs (must stay green)
+make test                        # the five proofs (must stay green)
 make fetch-iso                   # (re)download images/TempleOS.ISO
 make clean                       # remove run artifacts; never touches the golden image
 ```
 
-## Run artifacts (fixed paths, overwritten every run)
+## Run artifacts
 
-| path                        | contents                                                  |
+Every invocation prints its authoritative result directory as the first
+stdout line, before disk creation or slot waiting:
+
+```text
+RUN_DIR=/absolute/path/to/out/runs/run-20260711-142233-a8K3Qp
+```
+
+There is no process-global "latest" file or symlink: use the directory
+printed by the invocation you started. Each batch run has this layout:
+
+| path within `RUN_DIR`       | contents                                                  |
 |-----------------------------|-----------------------------------------------------------|
-| `out/latest.png`            | last stable frame of the guest screen (640x480)           |
-| `out/screen.txt`            | same frame as text — exact 8x8 glyph OCR, grep this first |
-| `out/guest.log`             | guest task-doc dump; compiler/runtime errors appear here  |
-| `out/status`                | raw guest status line (`OK` / `ERR` / `OK NOSRC`)         |
-| `out/frames/frame-NNNN.png` | rolling per-run screendumps (~0.7 s apart)                |
-| `out/anim.gif`              | trailing frames as GIF (best-effort; see `ANIM_FRAMES`)   |
+| `.lock`                     | liveness lock, held for the invocation                    |
+| `slot`                      | bounded-concurrency slot number                           |
+| `xfer.img`, `mtools.conf`   | retained guest transfer disk and its mtools config        |
+| `qemu.log`                  | QEMU diagnostics                                          |
+| `latest.png`                | last stable guest frame (640x480)                         |
+| `screen.txt`                | exact 8x8 glyph OCR of that frame; grep this first        |
+| `guest.log`, `status`       | guest task-doc dump and raw `OK` / `ERR` status           |
+| `frames/frame-NNNN.png`     | rolling screendumps (~0.7 s apart)                        |
+| `anim.gif`                  | trailing frames as a best-effort GIF                      |
 
-Exit codes of `tools/run.sh` / `make run`:
+`RUN_DIR=/path tools/run.sh SRC.HC` reserves a specific new or empty direct
+child of `out/runs/`; nested overrides are rejected. Reuse of a completed or
+active directory fails safely. The wrapper itself owns the liveness lock.
+
+Exit codes of `tools/run.sh` / `make run` remain:
 
 * **0** — guest compiled and ran the source
-* **1** — guest reported a compile/runtime error (read `out/guest.log`)
+* **1** — guest reported a compile/runtime error (read the run's `guest.log`)
 * **2** — harness failure: timeout, no guest status, missing golden image
 
-Read screenshots yourself: `out/latest.png` is a normal PNG; `out/screen.txt`
-is faster to grep. Any screendump can be OCR'd with
+Read screenshots yourself: the run's `latest.png` is a normal PNG and its
+`screen.txt` is faster to grep. Any screendump can be OCR'd with
 `python3 tools/scrtext.py FILE.png [--grep STRING]`.
 
 ## How a run works
 
 ```
-src/foo.HC ──mtools──> images/xfer.img (FAT32, MBR type 0x0C)  as MAIN.HC
+src/foo.HC ──mtools──> RUN_DIR/xfer.img (FAT32, MBR type 0x0C) as MAIN.HC
                        + guest/RUN.HC (runner, refreshed every run)
                 │
                 ▼
-QEMU boots images/work.qcow2 — throwaway overlay on read-only golden.qcow2
+QEMU boots RUN_DIR/overlay.qcow2 — throwaway overlay on golden.qcow2
+and exposes RUN_DIR/qmp.sock for isolated screen capture
                 │
                 ▼  in the guest
 C:/Home/Once.HC (hook baked into golden)
@@ -53,7 +71,7 @@ C:/Home/Once.HC (hook baked into golden)
           try { ExeFile2("E:/MAIN.HC"); } catch { log it }
           write E:/STAT.TXT + E:/LOG.TXT, hold picture 4 s, Reboot
                 │
-                ▼  on the host (tools/run.sh)
+                ▼  on the host (tools/run.sh, all output in RUN_DIR)
 -no-reboot turns the guest's Reboot into a clean QEMU exit; rolling QMP
 screendumps kept the last frame; mtools pulls STAT/LOG off xfer.img
 ```
@@ -81,7 +99,7 @@ keyboard buffer holds early presses, duplicates are harmless).
   keep that if you touch it.
 * A hard runtime fault (bad pointer) drops the guest into the debugger.
   The host's `RUN_TIMEOUT` (config.sh, 90 s) kills the VM → exit 2, and
-  `out/screen.txt` contains the register dump.
+  the run's `screen.txt` contains the register dump.
 * The "shader" idiom: install `Fs->draw_it=&DrawIt;` (called ~30 fps,
   see src/gradient.HC and vendor Demo/Graphics/Box.HC). One-shot DCAlias
   drawing also persists, but draw_it survives window redraws.
@@ -90,14 +108,21 @@ keyboard buffer holds early presses, duplicates are harmless).
 
 * `images/golden.qcow2` is **read-only**; runs use fresh qcow2 overlays.
   Guest disk corruption is by construction a non-event.
-* Runs serialize on `images/run.lock` (flock, 300 s wait) — multiple
-  agents/watchers share the repo safely. Don't bypass run.sh with your
-  own QEMU invocation against the shared overlay/xfer paths.
+* Batch and GUI VMs share `MAX_RUNS` persistent slot locks. Excess callers
+  poll all slots for up to `RUN_QUEUE_TIMEOUT`; never bypass this semaphore.
+* Each VM owns its overlay, transfer disk, QMP socket, and artifacts. Batch
+  runs, GUI sessions, agents, and watch iterations may therefore overlap.
+* Completed directories are pruned to the newest `KEEP_RUNS`. Active locks
+  are skipped and do not count toward the limit. `make clean` removes all
+  unlocked runs but never active runs or persistent `images/slot.*` files.
+  Allocation and pruning share persistent `out/runs/.registry.lock`, so a
+  new directory cannot be observed between creation and liveness locking.
+  A failed deletion is warned about and skipped rather than blocking runs.
 * `guest/` is the source of truth for guest-side code. `RUN.HC` is
   refreshed onto the transfer disk every run; `ONCE.HC` is baked into the
   golden image (changing it requires `tools/install_os.sh --hook-only`).
-* mtools needs the repo config: `export MTOOLSRC=images/mtools.conf`
-  (drive `x:` = the transfer disk).
+* Inspect a retained transfer disk with
+  `MTOOLSRC=<run-dir>/mtools.conf mdir x:/`.
 * All knobs live in `config.sh` (including `ANIM_FRAMES` for GIF/proof
   trailing-frame count).
 
@@ -116,11 +141,12 @@ answer `y` (install), `y` (VM?), any key, wait, `y` (reboot now), then run
 
 ## Troubleshooting
 
-* **exit 2, `status='none'`** — the hook never ran. Check
-  `out/screen.txt`: MBR "Selection:" menu = boot keypress misfired
+* **exit 2, `status='none'`** — the hook never ran. Check the run's
+  `screen.txt`: MBR "Selection:" menu = boot keypress misfired
   (rerun); register dump = pre-hook crash.
-* **exit 2 after 90 s** — guest hung or sits in the debugger; see
-  `out/screen.txt`. Long-running toys: raise `RUN_TIMEOUT` in config.sh.
+* **exit 2 after 90 s** — guest hung or sits in the debugger; see that run's
+  `screen.txt`, `guest.log`, and `qemu.log`. Long-running toys may need a
+  larger `RUN_TIMEOUT` in `config.sh`.
 * **`Drive 'X:' not supported`** — you forgot `MTOOLSRC` (above).
 * **ISO download fails** — templeos.org drops connections; retry
   `make fetch-iso`. Any TempleOS 5.03 ISO works (17,350,656 bytes, 2017).
@@ -141,14 +167,16 @@ rewrite those trees.
 
 ```
 config.sh        all knobs (sizes, timeouts, paths)
-tools/           run.sh watch.sh gui.sh install_os.sh test.sh
+tools/           run.sh run-common.sh watch.sh gui.sh install_os.sh test.sh
                  qmp.py (QMP client) scrtext.py (screen->text OCR)
-                 mkxfer.sh (FAT32 transfer disk) imginfo.py
+                 mkxfer.sh (FAT32 transfer disk) imginfo.py test-run-locks.sh
 guest/           ONCE.HC (boot hook) RUN.HC (runner) INJECT.HC (installer)
 src/             toys (gradient.HC = hello world)
 tests/           fixtures for make test
-images/          gitignored: ISO, golden.qcow2, overlays, xfer, locks
-out/             gitignored: run artifacts + install checkpoints
+images/          gitignored: ISO, golden.qcow2, persistent slot locks
+out/runs/        gitignored: per-VM dirs and persistent .registry.lock
+out/install/     gitignored: golden-image installation checkpoints
+plans/           ordered implementation plans and status index
 vendor/TempleOS  reference source (cia-foundation/TempleOS)
 skills/holyc     HolyC knowledge base (maintained by a parallel agent)
 docs/            VISION.md (v1 spec), img/
