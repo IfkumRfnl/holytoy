@@ -86,7 +86,9 @@ holy_allocate_run_dir() {
     flock -u 6 || return 2
 }
 
-# Acquire any persistent VM slot and leave it locked on fd 9.
+# Acquire any persistent VM slot and leave it locked on fd 9. The admission
+# lock prevents a later caller from repeatedly overtaking an existing waiter;
+# the admitted caller still scans every slot to avoid head-of-line blocking.
 holy_acquire_vm_slot() {
     local caller="$1"
     local candidate queue_start
@@ -94,16 +96,26 @@ holy_acquire_vm_slot() {
     mkdir -p "$ROOT/images" || return 2
     SLOT=""
     queue_start=$SECONDS
+    exec 7>"$ROOT/images/slot.queue" || return 2
+    if ! flock -w "$RUN_QUEUE_TIMEOUT" 7; then
+        echo "$caller: no VM slot became free within ${RUN_QUEUE_TIMEOUT}s" >&2
+        return 2
+    fi
     while :; do
         for ((candidate=1; candidate<=MAX_RUNS; candidate++)); do
-            exec 9>"$ROOT/images/slot.$candidate" || return 2
+            if ! exec 9>"$ROOT/images/slot.$candidate"; then
+                flock -u 7 || true
+                return 2
+            fi
             if flock -n 9; then
                 SLOT="$candidate"
+                flock -u 7 || return 2
                 return 0
             fi
         done
         if (( SECONDS - queue_start >= RUN_QUEUE_TIMEOUT )); then
             echo "$caller: no VM slot became free within ${RUN_QUEUE_TIMEOUT}s" >&2
+            flock -u 7 || true
             return 2
         fi
         sleep 0.1
