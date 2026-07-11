@@ -75,4 +75,7 @@ RC=$?
 QPID=""
 wait "$BOOT_PID" 2>/dev/null || true
 BOOT_PID=""
+if (( RC != 0 )); then
+    echo "gui.sh: QEMU exited with status $RC; see $RUN_DIR/qemu.log" >&2
+fi
 exit "$RC"
