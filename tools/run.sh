@@ -49,6 +49,7 @@ echo "RUN_DIR=$RUN_DIR"
 }
 mkdir -p "$FRAMES" || exit 2
 
+holy_prepare_glsl || exit 1
 if ! "$ROOT/tools/mkxfer.sh" "$XFER" "$SRC"; then
     echo "run.sh: could not create transfer disk" >&2
     exit 2

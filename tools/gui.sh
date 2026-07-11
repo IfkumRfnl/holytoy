@@ -42,6 +42,7 @@ echo "RUN_DIR=$RUN_DIR"
     echo "gui.sh: could not prune old runs" >&2
     exit 2
 }
+holy_prepare_glsl || exit 1
 if ! HOLYTOY_GUI=1 "$ROOT/tools/mkxfer.sh" "$XFER" "$SRC"; then
     echo "gui.sh: could not create transfer disk" >&2
     exit 2
