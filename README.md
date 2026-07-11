@@ -1,9 +1,10 @@
 # holytoy
 
-> Where this is going: a full Shadertoy clone running *inside* TempleOS —
-> code input box + live viewport, GLSL fragment shaders transpiled to
-> HolyC, LUT-based fast math. See **[docs/VISION.md](docs/VISION.md)**.
-> What exists today is the dev harness described below.
+> The product is a full Shadertoy clone running *inside* TempleOS — code
+> input box + live viewport, GLSL fragment shaders transpiled to HolyC,
+> LUT-based fast math. All of that is the scope of **v1**, the first real
+> version — see **[docs/VISION.md](docs/VISION.md)**. What exists today is
+> the dev harness described below: the proof loop we build the app with.
 
 A Shadertoy-style live-coding playground for **HolyC on real TempleOS**,
 running headless in QEMU. Edit a `.HC` file, run one command, and seconds

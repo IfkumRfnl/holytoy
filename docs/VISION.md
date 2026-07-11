@@ -1,8 +1,10 @@
-# holytoy vision: a Shadertoy clone *inside* TempleOS
+# holytoy: a Shadertoy clone *inside* TempleOS
 
-Status: **design target, not implemented.** What exists today is the dev
-harness (README.md): host-driven edit→inject→boot→screenshot cycles.
-This document is the shape the project is heading toward.
+Status: **spec for the first version.** This is not a someday/stretch
+document — everything below is what v1, the first real release, contains.
+What exists today is the dev harness (README.md): host-driven
+edit→inject→boot→screenshot cycles, which is the proof loop we build the
+app with, not the product.
 
 ## Target UX
 
@@ -48,13 +50,12 @@ Scope (deliberately small — Shadertoy-subset GLSL, not the spec):
 - control flow: `if/for/while`, function definitions
 - no textures/buffers initially (Stage E adds a channel0 sampler maybe)
 
-Where it runs — two phases:
-1. **Host-side first** (Python, `tools/glsl2hc.py`): `src/*.glsl` becomes
-   `.HC` during `make run`/`make watch`. Cheap to build, testable with the
-   existing harness, no guest constraints.
-2. **In-guest later**: port the emitter to HolyC so the input box takes
-   GLSL directly. (Fallback if that's unreasonable: the in-guest input box
-   speaks HolyC-with-shader-ABI, and GLSL stays a host-side convenience.)
+Where it runs: **in the guest — the v1 input box takes GLSL directly.**
+A host-side Python prototype (`tools/glsl2hc.py`) comes first purely as a
+development vehicle (fast iteration on the emitter, testable against the
+harness before the app exists), then the emitter is ported to HolyC and
+embedded in the app. The GLSL subset above is chosen small precisely so
+the in-guest port is realistic.
 
 ### 2. Shader ABI in HolyC
 
@@ -93,17 +94,28 @@ per-pixel F64 transcendentals won't hit interactive rates. The plan:
 
 ### 4. Staging
 
-| stage | deliverable | builds on |
-|-------|-------------|-----------|
-| A ✅ | host harness: inject/run/screenshot/errors | done (README) |
-| B | shader ABI + render loop + LUT math lib in `guest/`, toys written as `MainImage` in HolyC | A |
-| C | host-side `glsl2hc.py`; `make run SRC=src/foo.glsl` just works; golden-image tests for the builtin library | B |
-| D | in-guest HolyToy app: editor pane (DolDoc edit control) + viewport task, recompile-on-save via `ExePutS2`, inline errors | B |
-| E | GLSL input directly in-guest (transpiler ported to HolyC), uniforms `iMouse` from real mouse, maybe channel0 texture | C+D |
+### 4. Build order (all of it is v1 — this is not a multi-release roadmap)
 
-The harness stays the outer loop through all stages: every stage lands
-with `make test` proofs (e.g. "transpiled plasma renders ≥N distinct
-colors", "LUT sin max error < ε", "editor survives a syntax error").
+**Ground rules (per the user):**
+- The first thing we iterate on already has the final form: the
+  in-TempleOS app — input box + live viewport, edit → recompile → pixels
+  change. Nothing ships as "host pipeline now, app later".
+- GLSL input, the transpiler and the fast-math floor are **in scope for
+  the first version**, not follow-ups. The steps below are engineering
+  order within v1 (days-to-weeks of iteration), each step demo-able.
+
+| step | deliverable |
+|------|-------------|
+| 1 | **HolyToy app skeleton in the guest**: split window — editable code box (DolDoc edit control) + animating viewport task. Recompile-on-change via `ExePutS2`; compile errors render inline in the code pane, never crash the app. Temporary shader dialect: HolyC `MainImage` ABI (§2), so the app is exercisable before the transpiler lands. |
+| 2 | perf floor: LUT/fixed-point math lib, render-scale viewport, ms/frame readout |
+| 3 | GLSL in the input box: transpiler prototyped host-side (`glsl2hc.py`) for fast iteration, then embedded so the guest compiles GLSL without host help; Shadertoy uniforms incl. real `iMouse` |
+| 4 | polish to call it v1: palette-cycling/dithering modes, a few bundled example shaders, shader load/save on the transfer disk |
+
+The existing harness (README) stays the outer proof loop for every step:
+each lands with `make test` proofs driven by screendumps + `scrtext.py`
+(e.g. "editor shows typed source", "viewport animates ≥N distinct frames",
+"syntax error appears in the code pane and app survives", "LUT sin max
+error < ε").
 
 ## Open questions (decide when we get there)
 
