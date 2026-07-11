@@ -18,7 +18,7 @@ sessions.
 | 005  | Isolated run directories and bounded parallel VMs | P1 | M | 001 | DONE (locking preflight; parallel slots 2 and 1) |
 | 002  | HolyToy in-guest app skeleton spike (VISION step 1) | P1 | L | 001, 005 | DONE (viewport+pane+F5 recompile; self-test markers green, 6/6 proofs; notes in docs/notes/step1-skeleton.md) |
 | 003  | Perf-floor spike: F64 vs LUT fixed-point, pick format (step 2) | P2 | M | — | DONE (LUT 2.5x at 640x480, 6.8x unmasked; 16.16 vs 10.22 a tie -> 16.16 default; numbers in docs/notes/perf-floor.md) |
-| 004  | GLSL→HolyC transpiler prototype `tools/glsl2hc.py` (step 3) | P2 | L | 005 | IN PROGRESS (delegated executor, branch `advisor/004-glsl2hc`) |
+| 004  | GLSL→HolyC transpiler prototype `tools/glsl2hc.py` (step 3) | P2 | L | 005 | DONE (50 unit tests; gradient/circle/plasma e2e exit 0, gradient 16 colors; coverage in docs/notes/glsl2hc.md) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
