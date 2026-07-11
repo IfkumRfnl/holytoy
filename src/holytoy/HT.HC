@@ -33,6 +33,19 @@ U8 *ht_src1=
 "  *out_color=ToI64(v*2.0+8.0)&15;\n"
 "}\n";
 
+U8 *ht_src2=
+"U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)\n"
+"{//sample 2: expanding bright rings\n"
+"  F64 dx=x-u->res_x/2.0,dy=y-u->res_y/2.0,t=u->i_time;\n"
+"  *out_color=(ToI64(Sqrt(dx*dx+dy*dy)*0.11-t*9.0)&7)+8;\n"
+"}\n";
+
+U8 *ht_bad=
+"U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)\n"
+"{//deliberately broken: missing expression\n"
+"  *out_color=;\n"
+"}\n";
+
 U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)
 {//Built-in sample shader v1: plasma bands (same text as ht_src1).
   F64 fx=x,fy=y,t=u->i_time,v;
@@ -81,6 +94,48 @@ U0 HtDrawPane(CTask *task,CDC *dc)
   GrPrint(dc,0,HT_STATUS_ROW*8," %s",ht_status);
 }
 
+U0 (*ht_new_fp)(CHtUniforms *u,I64 x,I64 y,U8 *out_color);
+
+Bool HtRecompile(U8 *src)
+{//Compile shader source in-task (ExePutS2, Compiler/CMain.HC:631 throws
+ //catchable exceptions); rebind ht_fp only on success.  The fresh
+ //&MainImage is taken INSIDE the compiled unit (src/reload.HC pattern) so
+ //it binds the newly JITed code, not the code current when this function
+ //was compiled.  On failure the old shader keeps rendering.
+  Bool ok=FALSE;
+  I64 n=StrLen(src),ec;
+  U8 *buf,ecs[9];
+  if (n>HT_SRC_MAX-1) {
+    HtStatus(TRUE,"COMPILE ERR source too long (%d>%d)",n,HT_SRC_MAX-1);
+    return FALSE;
+  }
+  if (src!=ht_src)
+    StrCpy(ht_src,src);		//pane always shows what was attempted
+  buf=MStrPrint("%s\nht_new_fp=&MainImage;\n",ht_src);
+  ht_new_fp=NULL;
+  try {
+    ExePutS2(buf);
+    ok=TRUE;
+  } catch {
+    Fs->catch_except=TRUE;
+    ec=Fs->except_ch;
+    MemCpy(ecs,&ec,8);
+    ecs[8]=0;
+    HtStatus(TRUE,"COMPILE ERR [%s]  previous shader kept",ecs);
+  }
+  Free(buf);
+  if (ok) {
+    if (ht_new_fp) {
+      ht_fp=ht_new_fp;
+      HtStatus(FALSE,"OK  compiled %d bytes",n);
+    } else {
+      ok=FALSE;
+      HtStatus(TRUE,"COMPILE ERR no MainImage bound");
+    }
+  }
+  return ok;
+}
+
 U0 HtDrawIt(CTask *task,CDC *dc)
 {//dc aliases gr.dc2; raw body pokes are ABSOLUTE screen coords.
   I64 bx,by,i,j,sx0,sy,stride=dc->width_internal;
@@ -118,7 +173,44 @@ U0 HtDrawIt(CTask *task,CDC *dc)
   HtDrawPane(task,dc);
 }
 
+U0 HtSelfTest()
+{//Headless proof driven by guest/RUN.HC; markers land in guest.log via
+ //the task-doc dump.  Leaves the failed-compile state on screen at the
+ //end so the final screenshot shows the error line over a live viewport.
+  U0 (*before)(CHtUniforms *u,I64 x,I64 y,U8 *out_color);
+  I64 f1,f2;
+  Sleep(2000);			//~2s of shader v1 for the rolling frame dump
+  before=ht_fp;
+  if (HtRecompile(ht_src2) && ht_fp!=before && ht_fp==ht_new_fp)
+    "HT SWAP OK\n";
+  else
+    "HT SWAP FAIL\n";
+  if (HtRecompile(ht_src2))	//recompile of identical source is harmless
+    "HT IDENT OK\n";
+  else
+    "HT IDENT FAIL\n";
+  before=ht_fp;
+  f1=ht_u.i_frame;
+  if (!HtRecompile(ht_bad) && ht_fp==before) {
+    Sleep(500);
+    f2=ht_u.i_frame;
+    if (f2>f1)
+      "HT ERRSURVIVE OK\n";
+    else
+      "HT ERRSURVIVE FAIL frames frozen\n";
+  } else
+    "HT ERRSURVIVE FAIL bad source compiled\n";
+  if (HtRecompile(ht_src2))	//compiler still usable after a failure
+    "HT RECOVER OK\n";
+  else
+    "HT RECOVER FAIL\n";
+  HtRecompile(ht_bad);		//park in the survived-error demo state
+}
+
+Bool ht_gui=FileFind("E:/GUI.TXT");
 StrCpy(ht_src,ht_src1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
 Fs->draw_it=&HtDrawIt;
+if (!ht_gui)
+  HtSelfTest;
