@@ -236,7 +236,11 @@ if (!(0<=x[i]<Fs->pix_width<<32)) ...   // chained comparison + shifted bound
   `I64 i,j;` at function top; globals lowercase_with_underscores; `#define` ALL_CAPS;
   temporaries `tmpc`/`tmpt`; no blank lines inside functions; `//` comments;
   doc-comment on the line after `{`: `{//color is 0-7`.
-- Greek in identifiers is normal: `θ`, `dθ`, `π`.
+- Greek in identifiers is normal in VENDOR sources (`θ`, `dθ`, `π`) — but those are
+  single bytes in TempleOS's codepage, not UTF-8. When authoring on the host, use
+  ASCII only: `pi` for π (a UTF-8 `π` is a compile error, VM-verified), plain names
+  for variables (a UTF-8 `θ` happens to lex as an identifier — bytes 128-255 are
+  identifier chars — but renders as garbage in the TempleOS editor).
 
 ## Menus, scores, wallpaper (garnish)
 

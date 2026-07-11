@@ -6,7 +6,10 @@ What a HolyC program lives inside. Citations relative to `vendor/TempleOS`.
 
 - "Running a program" is `#include`-ing its source into your task's compiler. `ExeFile
   ("name")` literally synthesizes `#include "name";` (`Compiler/CMain.HC:614-663`);
-  `ExePrint("...")` compiles and runs a string. There is no exec, no processes, no argv —
+  `ExePrint("...")` compiles and runs a string. **ExeFile/ExePutS swallow `'Compiler'`
+  and `'Break'` exceptions internally** (`CMain.HC:589-598`) — a driver that must SEE
+  compile errors (e.g. a test harness) uses the throwing variants `ExeFile2`/
+  `ExePutS2`/`ExePrint2` (`CMain.HC:631-670`) inside its own try/catch. There is no exec, no processes, no argv —
   "run with args" means calling a function: `RunFile()` = ExeFile + call the
   last-defined function with your args.
 - **Granularity: ONE top-level statement at a time.** `ExeCmdLine` (`Kernel/KTask.HC:302-346`)
@@ -95,7 +98,10 @@ public extern U8 *StrNew(U8 *buf,CTask *mem_task=NULL);
   files are contiguous and cannot grow.
 - `.Z` suffix = transparently compressed on read/write. Default HolyC source type is
   `.HC.Z`. Lookups auto-toggle `.Z` and then **search parent directories** if not found
-  (`Doc/CmdLineOverview.DD`, `Kernel/BlkDev/DskFind.HC`).
+  (`Doc/CmdLineOverview.DD`, `Kernel/BlkDev/DskFind.HC`). Precise trigger: a name is
+  ".Z" only if it ends `.Z` AND contains MORE THAN ONE dot (`IsDotZ`,
+  `Kernel/BlkDev/DskStrA.HC:22-29`) — `FOO.Z` is NOT compressed, `FOO.HC.Z` is; same
+  two-dot rule for `.C` (contiguous).
 - **`#include` resolves against the task's current directory, not the including file's
   location** (`Compiler/Lex.HC:305-311` — FileNameAbs on the raw name). Hence the
   `Cd(__DIR__);;` prologue in multi-file apps. `__DIR__`/`__FILE__` are #exe-based
@@ -124,7 +130,10 @@ Warm reboot without hardware reset: `BootRAM()` (kernel dev); reinstall boot: `B
 - `ClassRep(ptr)` — dump any struct by type (uses `lastclass`). `D(addr)`, `Dm`, `Da`
   hex dumps; `Dr` registers.
 - `Find("needle","mask")` = grep over files (`Adam/Opt/Utils/Find.HC:145`).
-  `Help;` for the help index; `#help_index` tags symbols into it. **There is no `Man()`.**
+  `Help;` for the help index; `#help_index` tags symbols into it.
+  `Man("SymName")` jumps to the symbol's SOURCE CODE via its src_link ("Owner's manual
+  for symbol. Edit src code for symbol." — `Kernel/FunSeg.HC:346`) — the fastest way
+  to read any function's implementation from inside the OS.
 - `Trace()`/`PassTrace()`/`Echo()` — compiler introspection. `HeapLog()` for leaks,
   `Prof()`/`ProfRep()` for profiling. `RawPrint()`/`Raw(TRUE)` bypass the window system.
 - CTRL-ALT-c throws an exception in the focused task; CTRL-ALT-x kills it.

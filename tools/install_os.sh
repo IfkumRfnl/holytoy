@@ -10,10 +10,9 @@
 # The result images/golden.qcow2 is made read-only; run.sh only ever touches
 # throwaway overlays on top of it.
 #
-# Prompt detection: the guest screen is polled via QMP screendumps and two
-# consecutive frames are compared with ffmpeg PSNR. During file copy the
-# screen churns (low PSNR); sitting at a prompt only the clock/cursor blink
-# (high PSNR). Checkpoints land in out/install/ for post-mortem.
+# Prompt detection: QMP screendumps are read as text via tools/scrtext.py
+# (exact 8x8 kernel-font glyph match) and each installer prompt is awaited
+# by literal substring. Checkpoints land in out/install/ for post-mortem.
 #
 # Manual fallback (if this script misbehaves, ~60s by hand):
 #   tools/gui.sh will not work yet (no golden image), so run:
@@ -45,33 +44,18 @@ QPID=""
 cleanup() { [ -n "$QPID" ] && kill "$QPID" 2>/dev/null; }
 trap cleanup EXIT
 
-# PSNR between two PNGs; prints "inf" for identical frames.
-psnr() {
-    ffmpeg -hide_banner -i "$1" -i "$2" -filter_complex psnr -f null - 2>&1 |
-        sed -n 's/.*average:\([0-9.inf]*\).*/\1/p' | head -1
-}
-
-# Wait until N consecutive frame pairs are near-identical (prompt reached).
-# wait_quiet TAG NEED MAX_SECS
-wait_quiet() {
-    local tag="$1" need="$2" max="$3" quiet=0 t=0 p
-    QMP screendump "$CHK/$tag-a.png" 2>/dev/null || true
+# Wait until STRING appears on the guest screen (case-insensitive).
+# wait_text TAG STRING MAX_SECS
+wait_text() {
+    local tag="$1" needle="$2" max="$3" t=0
     while (( t < max )); do
-        sleep 5; t=$((t+5))
-        if ! QMP screendump "$CHK/$tag-b.png" 2>/dev/null; then continue; fi
-        p="$(psnr "$CHK/$tag-a.png" "$CHK/$tag-b.png" || echo 0)"
-        mv -f "$CHK/$tag-b.png" "$CHK/$tag-a.png"
-        case "$p" in
-            inf*) quiet=$((quiet+1)) ;;
-            *) if awk "BEGIN{exit !($p > 34)}" 2>/dev/null; then
-                   quiet=$((quiet+1))
-               else
-                   quiet=0
-               fi ;;
-        esac
-        if (( quiet >= need )); then return 0; fi
+        if QMP screendump "$CHK/$tag.png" 2>/dev/null &&
+           python3 "$ROOT/tools/scrtext.py" "$CHK/$tag.png" --grep "$needle"; then
+            return 0
+        fi
+        sleep 3; t=$((t+3))
     done
-    echo "install_os.sh: timed out waiting for quiet screen ($tag) — see $CHK/$tag-a.png" >&2
+    echo "install_os.sh: timed out waiting for '$needle' ($tag) — see $CHK/$tag.png" >&2
     return 1
 }
 
@@ -105,14 +89,13 @@ if (( ! HOOK_ONLY )); then
     QPID=$!
 
     sleep 8
-    wait_quiet boot 2 60           # "Install onto hard drive (y or n)?"
-    QMP keys y; sleep 4
-    wait_quiet vmq 2 60            # "…inside VMware, QEMU… (y or n)?"
-    QMP keys y; sleep 3
-    wait_quiet presskey 2 60       # "PRESS A KEY"
+    wait_text boot "Install onto hard drive" 90
+    QMP keys y; sleep 2
+    wait_text vmq "similar virtual" 60
+    QMP keys y; sleep 2
+    wait_text presskey "press a key" 60
     QMP keys spc
-    sleep 60                       # let the copy phase get going
-    wait_quiet rebootq 3 600       # "Reboot Now (y or n)?" after copy churn
+    wait_text rebootq "Reboot Now" 600      # install copy takes minutes (TCG)
     QMP screendump "$CHK/p1-final.png" || true
     QMP keys y                     # reboot → -no-reboot makes QEMU exit
     wait_exit 60 || { echo "install_os.sh: QEMU did not exit after reboot" >&2; exit 2; }
@@ -132,10 +115,18 @@ chmod +w "$GOLDEN"
     -qmp unix:"$SOCK",server,nowait >"$CHK/qemu-p2.log" 2>&1 &
 QPID=$!
 
-sleep 3
-QMP keys 1                         # TempleOS MBR loader menu: "1. Drive C"
-sleep 5
-wait_quiet hdboot 2 90             # first HD boot: TipOfDay + "Take Tour"
+# The MBR loader's drive menu runs in BIOS text mode (720x400 screendumps,
+# not TempleOS's 640x480) — keep answering "1" (Drive C) until the guest
+# switches to graphics mode, then await the first-boot tour prompt.
+T=0
+while (( T < 60 )); do
+    sleep 3; T=$((T+3))
+    QMP screendump "$CHK/bootmenu.png" 2>/dev/null || continue
+    SZ="$(python3 "$ROOT/tools/imginfo.py" "$CHK/bootmenu.png" 2>/dev/null | cut -d' ' -f1)"
+    [ "$SZ" = "640" ] && break
+    QMP keys 1
+done
+wait_text tour "Take Tour" 120     # first HD boot: TipOfDay + "Take Tour"
 QMP keys n; sleep 2                # decline tour → shell
 QMP screendump "$CHK/p2-shell.png" || true
 QMP typefile "$ROOT/guest/INJECT.HC"   # mounts xfer, installs hook, reboots

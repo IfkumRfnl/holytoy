@@ -4,8 +4,9 @@ All signatures are copied verbatim from `vendor/TempleOS` (paths relative to tha
 **Never guess a signature — grep these files.** The graphics library is `Adam/Gr/`
 (note: `GrPrimatives.HC` is the real spelling). Kernel declarations: `Kernel/KernelA.HH`
 (types/defines), `Kernel/KernelB.HH` (intrinsics), `Kernel/KernelC.HH` (extern decls).
-Non-ASCII in signatures: `ã` below is TempleOS's pi glyph (char 0xE3); write `π`
-(or the raw byte) in TempleOS — sources render it as π.
+Non-ASCII in signatures: `ã` below is how TempleOS's pi glyph (single byte 0xE3)
+mis-renders on the host. In host-authored code always write the ASCII `pi` define —
+a UTF-8 `π` will not compile (see the Math section).
 
 ## Screen model — the facts everything else hangs on
 
@@ -145,10 +146,15 @@ public U0  GrBorder(CDC *dc=gr.dc,I64 x1,I64 y1,I64 x2,I64 y2,I64 step=1,I64 sta
 
 There is no `PutPixel`/`GrPixel`/`GrBitMap()` function. Plot = `GrPlot`/`GrPlot0`.
 **Outline vs filled**: `GrCircle`, `GrEllipse`, `GrBorder` draw OUTLINES; `GrRect`/
-`GrRectB` are filled; there is no filled-circle primitive — the idiom is outline +
-`GrFloodFill` at an interior point (`Demo/Graphics/SunMoon.HC`), or for rings, nested
-filled circles drawn large-to-small via repeated flood fill / radius loops of GrCircle
-(step=1 outlines at consecutive radii do NOT reliably tile gap-free; prefer FloodFill).
+`GrRectB` are filled; the filled circle is
+```holyc
+public I64 GrFillCircle(CDC *dc=gr.dc,I64 cx,I64 cy,I64 z=0,I64 diameter) // GrPrimatives.HC:390
+```
+— note the non-trailing default (`GrFillCircle(dc,x,y,,30)`) and that it takes
+DIAMETER, not radius. Alternative fill idiom: outline + `GrFloodFill` at an interior
+point (`Demo/Graphics/SunMoon.HC`). Don't build rings from step-1 GrCircle outlines at
+consecutive radii — integer rasterization can leave gaps; use nested GrFillCircle
+large-to-small, or FloodFill between two outlines.
 
 ### Direct body access (fastest per-pixel path)
 
@@ -316,8 +322,11 @@ public extern I64 Seed(I64 seed=0,CTask *task=NULL);
 public extern F64 Clamp(F64 d,F64 lo,F64 hi); Min(F64,F64); Max(F64,F64);
 ```
 
-`π` is a builtin `#define` for `3.14159...` (`Kernel/KernelA.HH:50-52` — defined both as
-`pi`-glyph char 0xE3 and usable in source; demos write `2*π/70`). Angles are radians.
+Pi is `#define`d twice (`Kernel/KernelA.HH:50-51`): as ASCII `pi` and as the pi GLYPH —
+a single byte 0xE3 in TempleOS's codepage. Vendor sources that display `2*π/70` store
+byte 0xE3. **A UTF-8 `π` from a host editor is two different bytes and fails to compile
+(`Invalid lval at "π"` — verified in VM). Host-authored files must write `pi`.**
+Angles are radians.
 
 ## Program-level / JIT
 

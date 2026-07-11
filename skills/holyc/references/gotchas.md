@@ -13,6 +13,7 @@ Each entry: the hallucination, the truth, the source. When in doubt, grep
 | `cond ? a : b` | No ternary. Use if/else (no continue either — use goto) | Doc/HolyC.DD |
 | `continue;` | Doesn't exist. `goto` to a label at loop end | Doc/HolyC.DD |
 | `a << (b-1)` habits | `<<`/`>>`/`` ` `` bind ABOVE `*`; `& ^ |` above `+ -`; `+ -` above comparisons. Re-parenthesize all bit math | Doc/HolyC.DD precedence table |
+| ``"%d",2`10`` | Power operator ALWAYS yields F64 (operands coerced); `%d` prints its raw bits. `ToI64(2`10)` or `%g` | Compiler/OptPass012.HC:299-306 |
 | `x ^ 8 == y` | In C this is `x^(8==y)`; in HolyC `^` binds above `==`, so it's `(x^8)==y`. Bitwise-vs-comparison precedence is inverted from C | Compiler/CInit.HC:287-330 |
 | `struct`, `enum`, `typedef`, `const`, `unsigned` | None exist. `class` only; #define for constants | Compiler/OpCodes.DD:140-188 |
 | `float`, `F32` | No 32-bit float at all. F64 only | Doc/HolyC.DD |
@@ -25,6 +26,7 @@ Each entry: the hallucination, the truth, the source. When in doubt, grep
 | `0755`, `1UL`, `1.0f` | No octal, no literal suffixes. `0b1010` binary exists | Compiler/Lex.HC:517-562 |
 | `"\a\b\f\v"` | Not escapes (backslash kept literally). Only `\0 \' \` \" \\ \d \n \r \t \x??` | Compiler/Lex.HC:377-424 |
 | `$` in a string | `$` is the DolDoc escape — write `$$` or `\d` for a literal dollar | Doc/HolyC.DD |
+| `2*π` in a host-authored file | Compile error `Invalid lval at "π"` (VM-verified): TempleOS's π is byte 0xE3 in its own codepage, not UTF-8. Write ASCII `pi`; keep host files pure ASCII | Kernel/KernelA.HH:50-51 |
 | big local arrays | Stack does NOT grow. MAlloc anything large | Doc/HolyC.DD |
 | `%ld %lld %o %i` | `%d` is 64-bit already; no octal/`%i`. HolyC adds `%b %n %z %p %D %T %,d` | Kernel/StrPrint.HC |
 | include guards | Unnecessary; re-inclusion shadows symbols by design | Doc/ScopingLinkage.DD |
@@ -45,7 +47,8 @@ Verified absent by grep; the real name follows.
 - `FBlink` → `Blink(F64 Hz=2.5)`.
 - `DCSymbol` → sprites are `$IB$` binary items + `Sprite3()`.
 - `COLOR_RED` etc. → bare `RED`, `LTGRAY`, ... (`KernelA.HH:2913`).
-- `Man()` → no man pages; `Help;`, AutoComplete F1, `Uf("Name")`.
+- `Man()` EXISTS but isn't man pages — `Man("Sym")` opens the symbol's source code
+  (`Kernel/FunSeg.HC:346`). Docs live in `Help;` and the `#help_index` system.
 - `Cat()` → `Type("file")`.
 - `MemMax()` → `MemRep()` reports memory.
 - `body_size` CDC field → compute `width_internal*height`.
@@ -75,8 +78,9 @@ though it sounds made-up.)
 - Row stride is `width_internal` (width rounded up to 8), not `width` — off-by-stride
   shears the image when poking body directly.
 - `GrRect(dc,x,y,w,h)` takes WIDTH/HEIGHT and is FILLED; `GrRectB` takes corners;
-  the outline rect is `GrBorder`. `GrCircle`/`GrEllipse` are OUTLINES — no filled-circle
-  primitive exists; fill via `GrFloodFill` at an interior point (SunMoon.HC idiom).
+  the outline rect is `GrBorder`. `GrCircle`/`GrEllipse` are OUTLINES — the filled one
+  is `GrFillCircle(dc,cx,cy,,diameter)` (DIAMETER not radius, non-trailing `z=0`
+  default; `GrPrimatives.HC:390`), or `GrFloodFill` at an interior point.
 - `i(F64)` does NOT convert an int to float — postfix casts reinterpret bits. Use
   `ToF64(i)` or mixed arithmetic (`i*1.0` works but ToF64 is the sanctioned form).
 - `GrPrint` has no font size — the 8x8 font is all there is. Scale by drawing.

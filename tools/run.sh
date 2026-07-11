@@ -82,7 +82,11 @@ done
 cleanup
 trap - EXIT
 
-[ -f "$FRAMES/last-good.png" ] && cp -f "$FRAMES/last-good.png" "$LATEST_PNG"
+if [ -f "$FRAMES/last-good.png" ]; then
+    cp -f "$FRAMES/last-good.png" "$LATEST_PNG"
+    # Machine-readable view of the final screen (exact glyph OCR).
+    python3 "$ROOT/tools/scrtext.py" "$LATEST_PNG" >"$OUT/screen.txt" 2>/dev/null || true
+fi
 
 # Pull guest-written files off the transfer disk.
 export MTOOLSRC="$ROOT/images/mtools.conf"

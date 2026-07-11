@@ -24,8 +24,8 @@ python3 skills/holyc/scripts/strip_doldoc.py vendor/TempleOS/Doc/HolyC.DD
    error — and postfix casts REINTERPRET bits, never convert values: use `ToF64/ToI64`
    or mixed arithmetic to convert.
 4. **Precedence is not C's**: `` ` `` `>>` `<<` bind ABOVE `*`; `& ^ |` above `+ -`;
-   `+ -` above `< ==`. `1<<n-1` == `(1<<n)-1`. `` ` `` is the power operator.
-   Re-parenthesize all bit math when translating from C.
+   `+ -` above `< ==`. `1<<n-1` == `(1<<n)-1`. `` ` `` is the power operator (result
+   is always F64). Re-parenthesize all bit math when translating from C.
 5. **Print shortcuts**: `"Score:%d\n",score;` is a statement (calls Print). No printf.
    `'*';` sends up to 8 packed chars to PutChars. No `%o`/`%i`; `%d` is 64-bit.
 6. **Types**: `U0 I8 U8 I16 U16 I32 U32 I64 U64 F64` only. No F32, no `struct/enum/
@@ -59,12 +59,12 @@ draw_it, and kills `Fs->animate_task`).
 ## Minimal demo skeleton (the real idiom)
 
 ```holyc
-F64 θ;                              // state in globals; greek is idiomatic
+F64 ang;                            // state in globals — draw_it gets no user ptr
 
 U0 DrawIt(CTask *task,CDC *dc)
 {
   dc->color=YELLOW;
-  GrCircle(dc,task->pix_width/2+100*Cos(θ),task->pix_height/2+100*Sin(θ),20);
+  GrCircle(dc,task->pix_width/2+100*Cos(ang),task->pix_height/2+100*Sin(ang),20);
 }
 
 U0 MyDemo()
@@ -75,7 +75,7 @@ U0 MyDemo()
   try {
     while (!ScanChar) {
       Sleep(20);
-      θ+=2*π/70;
+      ang+=2*pi/70;
     }
   } catch
     PutExcept;
@@ -84,6 +84,12 @@ U0 MyDemo()
 
 MyDemo;
 ```
+
+**Encoding trap (VM-verified):** Terry's sources display `π`/`θ`, but those are single
+bytes in TempleOS's own codepage (pi = 0xE3). A UTF-8 `π` typed on the host is two
+different bytes → `ERROR: Invalid lval at "π"`. In host-authored files write the ASCII
+`pi` define (`Kernel/KernelA.HH:50`) and ASCII identifiers; stick to plain ASCII
+throughout.
 
 ## Live reload (JIT redefinition — holytoy's mechanism)
 

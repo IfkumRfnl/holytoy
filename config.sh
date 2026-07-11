@@ -20,10 +20,9 @@ ACCEL_ARGS=""
 [ -e /dev/kvm ] && [ -w /dev/kvm ] && ACCEL_ARGS="-enable-kvm"
 
 # Run-cycle timing (seconds)
-BOOT_GRACE=6              # min wait before first screendump attempt
 RUN_TIMEOUT=90            # hard kill for a normal run cycle
-SHOW_SECS=4               # guest keeps the picture on screen this long before rebooting
 FRAME_INTERVAL=0.7        # rolling screendump cadence
+# (the guest-side screenshot hold is HT_SHOW_MS in guest/RUN.HC)
 
 # Output
 OUT="$ROOT/out"

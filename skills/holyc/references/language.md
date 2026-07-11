@@ -164,7 +164,10 @@ This is the opposite of C for shifts. Real code exploits it constantly:
 `1<<MSG_KEY_DOWN+1<<MSG_MS_L_DOWN` == `(1<<MSG_KEY_DOWN)+(1<<MSG_MS_L_DOWN)`.
 When translating C code, re-parenthesize every expression involving `<< >> & ^ |`.
 
-- `` ` `` is power: ``2`10`` == 1024 (also `Pow(base,power)` for F64).
+- `` ` `` is power — and its result is ALWAYS F64, even for two integer operands
+  (`IC_POWER` forces both to F64 and calls SYS_POW — `Compiler/OptPass012.HC:299-306`).
+  ``2`10`` equals 1024.0; print it with `%f`/`%g` or wrap in `ToI64()` — `"%d",2`10`
+  prints the raw F64 bits (garbage). `Pow(base,power)` is the function form.
 - **No ternary `?:`**. No comma operator in expressions (but `,` separates statements
   inside `{}` — `Compiler/PrsStmt.HC:1180-1186`).
 - **Chained comparisons are real**: `if (13<=age<20)` compiles as `13<=age && age<20`
