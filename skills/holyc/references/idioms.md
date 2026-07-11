@@ -159,7 +159,11 @@ SettingsPop;                        // restores original palette
 Palette *cycling*: rotate what each index means once per frame — 16 palette writes beat
 307200 pixel writes. Whole-palette swap: `GrPaletteSet(gr_palette_gray);` /
 `PaletteSetStd;`. Do the SetColor calls in the main loop (not draw_it — palette isn't
-per-frame composited, it's global hardware state).
+per-frame composited, it's global hardware state). For draw-once art + palette-only
+animation: draw on the persistent layer (`DCAlias` of gr.dc), then the loop needs ONLY
+`GrPaletteColorSet` + `Sleep` — the winmgr re-emits the unchanged gr.dc body to VGA
+every frame regardless (`GrScrn.HC:407`), so the new palette shows without Refresh or
+redrawing.
 
 ## ROP tricks (SunMoon.HC, Shading.HC, Doodle.HC)
 

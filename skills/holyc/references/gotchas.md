@@ -28,6 +28,7 @@ Each entry: the hallucination, the truth, the source. When in doubt, grep
 | big local arrays | Stack does NOT grow. MAlloc anything large | Doc/HolyC.DD |
 | `%ld %lld %o %i` | `%d` is 64-bit already; no octal/`%i`. HolyC adds `%b %n %z %p %D %T %,d` | Kernel/StrPrint.HC |
 | include guards | Unnecessary; re-inclusion shadows symbols by design | Doc/ScopingLinkage.DD |
+| `#include "KernelA.HH"` | Never include OS headers — the whole Kernel/Adam API is already in every task's symbol chain; demo files include nothing | Doc/Hash.DD |
 | `switch` with sparse cases | Always a jump table — huge sparse ranges explode. Also: `case 4...7:`, auto-number `case:`, `switch []` nobounds, `start:`/`end:` porches | Doc/HolyC.DD |
 
 ## API near-misses (plausible names that DON'T exist)
@@ -74,7 +75,10 @@ though it sounds made-up.)
 - Row stride is `width_internal` (width rounded up to 8), not `width` — off-by-stride
   shears the image when poking body directly.
 - `GrRect(dc,x,y,w,h)` takes WIDTH/HEIGHT and is FILLED; `GrRectB` takes corners;
-  the outline rect is `GrBorder`.
+  the outline rect is `GrBorder`. `GrCircle`/`GrEllipse` are OUTLINES — no filled-circle
+  primitive exists; fill via `GrFloodFill` at an interior point (SunMoon.HC idiom).
+- `i(F64)` does NOT convert an int to float — postfix casts reinterpret bits. Use
+  `ToF64(i)` or mixed arithmetic (`i*1.0` works but ToF64 is the sanctioned form).
 - `GrPrint` has no font size — the 8x8 font is all there is. Scale by drawing.
 - Window coords: clipped primitives on screen DCs translate by
   `dc->win_task->pix_left/pix_top` (+scroll) automatically and skip pixels covered by

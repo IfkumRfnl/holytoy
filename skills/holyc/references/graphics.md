@@ -25,6 +25,15 @@ Non-ASCII in signatures: `ã` below is TempleOS's pi glyph (char 0xE3); write `�
   - `gr.dc2` — recomposited from scratch every frame. **`draw_it` callbacks receive an
     alias of gr.dc2** clipped to the task — already offscreen, inherently flicker-free,
     must redraw everything each call.
+  - Every frame, `GrUpdateScrn` unconditionally blots gr.dc over the composited gr.dc2
+    (`DCBlotColor8(gr.dc2,gr.dc)`, `GrScrn.HC:407`) — the persistent layer reaches the
+    screen every frame **even with no draw_it installed**. So a draw-once image +
+    palette-only animation needs nothing but `Sleep()` pacing in the main loop.
+  - `draw_it` runs INSIDE the winmgr task, which updates every window: heavy per-pixel
+    math there slows the entire UI, and an exception in it is caught by the winmgr
+    ("Exception in WinMgr", your window gets hidden — `GrScrn.HC:18-56`). For expensive
+    effects, render into an offscreen `DCNew` DC from your own loop/animate task and
+    have draw_it just `GrBlot` it (the `Life.HC` pattern).
 
 ## CDC — the device context (`Kernel/KernelA.HH:3599-3659`)
 
@@ -135,6 +144,11 @@ public U0  GrBorder(CDC *dc=gr.dc,I64 x1,I64 y1,I64 x2,I64 y2,I64 step=1,I64 sta
 ```
 
 There is no `PutPixel`/`GrPixel`/`GrBitMap()` function. Plot = `GrPlot`/`GrPlot0`.
+**Outline vs filled**: `GrCircle`, `GrEllipse`, `GrBorder` draw OUTLINES; `GrRect`/
+`GrRectB` are filled; there is no filled-circle primitive — the idiom is outline +
+`GrFloodFill` at an interior point (`Demo/Graphics/SunMoon.HC`), or for rings, nested
+filled circles drawn large-to-small via repeated flood fill / radius loops of GrCircle
+(step=1 outlines at consecutive radii do NOT reliably tile gap-free; prefer FloodFill).
 
 ### Direct body access (fastest per-pixel path)
 
@@ -175,9 +189,12 @@ public CBGR48 gr_palette_gray[COLORS_NUM]                // :70  gray ramp
 public U8 gr_rainbow_10[10]                              // :2   color-cycle-friendly ramp
 ```
 
-- `CBGR48` = `I64 class { U16 b,g,r,pad; }` (`KernelA.HH:2951`). Because it's an I64-typed
-  class you can pass a literal: `GrPaletteColorSet(WHITE,0xFFFFFFFF0000)` = r=0xFFFF,
-  g=0xFFFF, b=0 (layout from low word: b,g,r,pad → literal reads `0x pad rrrr gggg bbbb`).
+- `CBGR48` = `I64 class { U16 b,g,r,pad; }` (`KernelA.HH:2951`). Full brightness per
+  channel is `0xFFFF` (`Palette.HC` ramps `j=0xFFFF*i/(COLORS_NUM-1);` into b/g/r —
+  assigning F64 expressions into the U16 fields converts implicitly). Because it's an
+  I64-typed class you can pass a literal: `GrPaletteColorSet(WHITE,0xFFFFFFFF0000)` =
+  r=0xFFFF, g=0xFFFF, b=0 (layout from low word: b,g,r,pad → literal reads
+  `0x pad rrrr gggg bbbb`).
 - VGA DAC is 6 bits/channel — only the top 6 bits of each U16 survive (`bgr48.r>>10`).
 - Takes effect immediately via port I/O (0x3C8/0x3C9) — **no flush**; palette cycling is
   just calling GrPaletteColorSet in a loop each frame.

@@ -41,6 +41,11 @@ U0 HtRun()
     }
     return;
   }
+  //Compile errors before RLf_ADAM_SERVER drop into the interactive
+  //debugger instead of throwing (Compiler/CExcept.HC LexExcept), and this
+  //hook runs early in boot — so wait for the run level before compiling.
+  while (!Bt(&sys_run_level,RLf_ADAM_SERVER))
+    Sleep(100);
   SettingsPush;
   WinBorder(OFF);
   WinMax;

@@ -102,9 +102,12 @@ No auto-newline — include `\n` yourself.
 Codes: `%%  %b %B` (binary) `%c %C` (char/uppercased; multi-char, `%h25c` repeats)
 `%d` (signed dec) `%u` (unsigned) `%x %X` (hex) `%e %f %g` (float) `%n` (engineering
 notation, `%h-3n` = milli) `%s` (string) `%S` (Define() entry) `%z %Q %q` (indexed
-NUL-list entry / quote / unquote) `%p %P` (symbolic pointer) `%D %T` (date/time)
-`%F` (file contents). **No `%o`, no `%i`, no `%ld`/`%lld`** (`%l` is accepted as a
-harmless no-op). `,` flag groups digits: `%,d`.
+NUL-list entry / quote / unquote) `%p %P` (symbolic pointer: renders the address as
+`FunName+offset` via the function-segment cache, hex if unresolved — works on JIT
+functions; `%P` wraps it in a clickable DolDoc link — `Kernel/StrPrint.HC:414-426`,
+`Kernel/FunSeg.HC:134`) `%D %T` (date/time) `%F` (file contents).
+**No `%o`, no `%i`, no `%ld`/`%lld`** (`%l` is accepted as a harmless no-op).
+`,` flag groups digits: `%,d`.
 
 Family: `StrPrint` (sprintf), `MStrPrint` (returns MAlloc'ed string), `CatPrint`,
 `DocPrint`, `ExePrint` (compile & run a string), `GrPrint` (pixels).
@@ -168,9 +171,15 @@ When translating C code, re-parenthesize every expression involving `<< >> & ^ |
   (`Doc/HolyC.DD`; demos: `if (!(0<=x[i]<Fs->pix_width<<32))`).
 - **Typecasting is postfix**: `x(F64)`, `p(CHashGeneric *)->user_data0`. A C-style prefix
   cast is a hard error: "Use TempleOS postfix typecasting" (`Compiler/PrsExp.HC:729-731`).
-  On constants the postfix cast reinterprets bits (`0x400921FB54442D18(F64)` is pi);
-  for value conversion use `ToI64()`, `ToF64()`, `ToBool()`. Normal C implicit int<->float
-  conversion happens in mixed arithmetic/assignment.
+  **A postfix cast RETYPES the bits — it never converts the value**, on variables as on
+  constants: `0x400921FB54442D18(F64)` is pi (`Kernel/KernelA.HH:52`); `PopUpFloat`
+  round-trips an F64's raw bits through an I64 with `return i(F64);`
+  (`Adam/DolDoc/DocPopUp.HC:230-232`); postfix casts work as lvalues for the same trick
+  (`tmpde->user_data(F64)=100.0*a/b;`). So `i(F64)` on an integer-valued I64 is float
+  garbage — for VALUE conversion use `ToF64()`, `ToI64()`, `ToBool()`, or rely on
+  implicit conversion: normal C-like int<->float conversion happens automatically in
+  mixed arithmetic, assignment, and argument passing (`Doc/HolyC.DD`). Postfix casts
+  are for pointer retyping and bit reinterpretation.
 - `sizeof(x)` and `offset(Class.member)` are keywords; both accept only ONE level of
   member. Bare `Class.member` in an expression also yields the offset.
 - `defined(SYM)` works in any expression, not just `#if`.
@@ -270,6 +279,8 @@ try {
 - Unhandled → `Panic("Unhandled Exception")` → debugger.
 - try/catch forces all locals off registers. Don't `goto` out of a `try{}`; don't
   `return` out of a `catch{}` (`Demo/Exceptions.HC` header warning).
+- Every real use of try/catch in the tree is INSIDE a function; file-scope `try` is
+  unattested — put your guarded main loop in a function (the standard skeleton does).
 - CTRL-ALT-c injects an exception into a task — wrapping the main loop in
   `try {...} catch PutExcept;` is how demos survive it.
 

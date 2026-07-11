@@ -4,11 +4,27 @@ What a HolyC program lives inside. Citations relative to `vendor/TempleOS`.
 
 ## Execution = compilation (the JIT model)
 
-- "Running a program" is `#include`-ing its source into your task's compiler. Top-level
-  statements execute as they're compiled. `ExeFile("name")` literally synthesizes
-  `#include "name";` (`Compiler/CMain.HC:614-663`); `ExePrint("...")` compiles and runs a
-  string. There is no exec, no processes, no argv — "run with args" means calling a
-  function: `RunFile()` = ExeFile + call the last-defined function with your args.
+- "Running a program" is `#include`-ing its source into your task's compiler. `ExeFile
+  ("name")` literally synthesizes `#include "name";` (`Compiler/CMain.HC:614-663`);
+  `ExePrint("...")` compiles and runs a string. There is no exec, no processes, no argv —
+  "run with args" means calling a function: `RunFile()` = ExeFile + call the
+  last-defined function with your args.
+- **Granularity: ONE top-level statement at a time.** `ExeCmdLine` (`Kernel/KTask.HC:302-346`)
+  loops `machine_code=LexStmt2Bin(cc,&type); res=Call(machine_code);` — each top-level
+  statement (function definitions install as encountered) is compiled AND executed
+  before the next is lexed. This single fact explains:
+  - why a bare `Cd(__DIR__);;` works before `#include` on the next line (the Cd has
+    already RUN when the lexer meets the #include — `Apps/Budget/Load.HC:3-8`);
+  - why you can redefine a function LATER IN THE SAME FILE: the second definition
+    shadows before subsequent statements compile;
+  - why symbols defined via `ExePrint("...")` mid-file are visible to statements after
+    that line (ExePrint executed into the same task hash table before they compiled);
+  - why `&Fun` binds at the compile time of the statement/function containing the
+    reference — the hash lookup happens then, returning the newest (shadowing) entry.
+- **No #includes are needed for the OS API.** The whole Kernel + Adam symbol set is
+  already in scope: JIT lookups walk your task's hash chain up to Adam, whose table
+  holds everything compiled at boot (`Doc/ScopingLinkage.DD`, `Doc/Hash.DD`). Demo files
+  in the tree include nothing.
 - The command line IS a HolyC REPL inside an editable DolDoc document: each line feeds
   the compiler; statements execute immediately (`Doc/CmdLineOverview.DD`). F5 in the
   editor = #include the file you're editing. There is no $PATH — typing a bare filename

@@ -52,8 +52,10 @@ python3 "$ROOT/tools/qmp.py" "$SOCK" keys 1 2>/dev/null || true
 sleep 2
 python3 "$ROOT/tools/qmp.py" "$SOCK" keys 1 2>/dev/null || true
 
-# Rolling screendumps; the guest reboots itself when done (-no-reboot => exit).
-sleep "$BOOT_GRACE"
+# Rolling screendumps start right away — the whole cycle can be ~12s and the
+# guest only holds the final picture for HT_SHOW_MS, so early boot frames are
+# fine (the newest good frame wins).
+sleep 1
 START=$SECONDS
 TIMED_OUT=0
 N=0
@@ -87,7 +89,8 @@ if [ -f "$GUEST_LOG" ] && [ -f "$STRIP" ]; then
         mv -f "$GUEST_LOG.tmp" "$GUEST_LOG"
 fi
 
-STATUS="$(tr -d '\r\0' <"$OUT/status" 2>/dev/null | head -1 || true)"
+STATUS=""
+[ -f "$OUT/status" ] && STATUS="$(tr -d '\r\0' <"$OUT/status" | head -1)"
 
 if (( TIMED_OUT )); then
     echo "run.sh: FAIL(timeout) status='${STATUS:-none}' log=$GUEST_LOG png=$LATEST_PNG" >&2
