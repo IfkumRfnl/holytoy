@@ -21,6 +21,7 @@ U0 (*ht_fp)(CHtUniforms *u,I64 x,I64 y,U8 *out_color);
 U8 ht_src[HT_SRC_MAX];		//current shader source (the code pane content)
 U8 ht_status[96];		//status/error line text
 Bool ht_status_err;		//status line draws LTRED when TRUE
+Bool ht_cursor;			//GUI edit mode: draw an end-of-buffer cursor
 
 U8 *ht_src1=
 "U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)\n"
@@ -76,6 +77,7 @@ U0 HtDrawPane(CTask *task,CDC *dc)
   GrPrint(dc,0,HT_PANE_ROW*8," HolyToy  F5 recompile  F1/F2 samples  ESC exit");
   dc->color=WHITE;
   row=HT_PANE_ROW+1;
+  n=0;
   while (*p && row<HT_PANE_ROW+1+HT_SRC_ROWS) {
     n=0;
     while (*p && *p!='\n' && n<78)
@@ -86,6 +88,14 @@ U0 HtDrawPane(CTask *task,CDC *dc)
     if (*p=='\n') p++;
     GrPrint(dc,8,row*8,"%s",line);
     row++;
+  }
+  if (ht_cursor && !*p && row<=HT_PANE_ROW+HT_SRC_ROWS) {
+    sy=StrLen(ht_src);		//cursor cell: end of buffer
+    dc->color=YELLOW;
+    if (!sy || ht_src[sy-1]=='\n')
+      GrPrint(dc,8,row*8,"_");
+    else
+      GrPrint(dc,8+n*8,(row-1)*8,"_");
   }
   if (ht_status_err)
     dc->color=LTRED;
@@ -207,10 +217,57 @@ U0 HtSelfTest()
   HtRecompile(ht_bad);		//park in the survived-error demo state
 }
 
+U0 HtInteract()
+{//GUI sessions only (E:/GUI.TXT present): own the keyboard until ESC.
+ //Minimal live loop: printable keys append at the end of the buffer,
+ //BACKSPACE deletes, ENTER inserts a newline, F5 recompiles the buffer,
+ //F1/F2 load the samples.  Blocking GetKey is fine here - the winmgr
+ //task keeps animating the viewport; headless runs never enter this.
+  I64 ch,sc,n;
+  Bool done=FALSE;
+  ht_cursor=TRUE;
+  HtStatus(FALSE,"EDIT  keys append at end of buffer; F5 recompiles");
+  try {
+    while (!done) {
+      ch=GetKey(&sc,FALSE);
+      n=StrLen(ht_src);
+      switch (ch) {
+        case 0:
+          switch (sc.u8[0]) {
+            case SC_F1: HtRecompile(ht_src1); break;
+            case SC_F2: HtRecompile(ht_src2); break;
+            case SC_F5: HtRecompile(ht_src);  break;
+          }
+          break;
+        case CH_ESC:
+        case CH_SHIFT_ESC:
+          done=TRUE;
+          break;
+        case CH_BACKSPACE:
+          if (n)
+            ht_src[n-1]=0;
+          break;
+        default:
+          if (ch=='\n' || 32<=ch<127) {
+            if (n<HT_SRC_MAX-1) {
+              ht_src[n]=ch;
+              ht_src[n+1]=0;
+            }
+          }
+      }
+    }
+  } catch
+    PutExcept;
+  ht_cursor=FALSE;
+  Fs->draw_it=NULL;		//hand the screen back to the shell
+}
+
 Bool ht_gui=FileFind("E:/GUI.TXT");
 StrCpy(ht_src,ht_src1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
 Fs->draw_it=&HtDrawIt;
-if (!ht_gui)
+if (ht_gui)
+  HtInteract;
+else
   HtSelfTest;
