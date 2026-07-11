@@ -21,6 +21,14 @@ SRC="${1:?usage: run.sh SRC.HC}"
 [ -f "$SRC" ] || { echo "run.sh: no such file: $SRC" >&2; exit 2; }
 [ -f "$GOLDEN" ] || { echo "run.sh: golden image missing — run 'make golden' first" >&2; exit 2; }
 
+# One VM cycle at a time: overlay, transfer disk and out/ are shared state.
+# Concurrent callers (e.g. two agents) queue here instead of corrupting runs.
+exec 9>"$ROOT/images/run.lock"
+if ! flock -w 300 9; then
+    echo "run.sh: another run held the lock >300s — giving up" >&2
+    exit 2
+fi
+
 SOCK="$ROOT/images/qmp-run.sock"
 FRAMES="$OUT/frames"
 mkdir -p "$OUT" "$FRAMES"

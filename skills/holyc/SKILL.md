@@ -20,7 +20,9 @@ python3 skills/holyc/scripts/strip_doldoc.py vendor/TempleOS/Doc/HolyC.DD
    ends with a bare call: `MyDemo;`
 2. **Paren-less calls**: `Dir;` calls Dir. So function *addresses* need `&`:
    `Fs->draw_it=&DrawIt;`
-3. **Postfix casts only**: `x(F64)`, `p(CDC*)->body`. Prefix `(F64)x` is a compile error.
+3. **Postfix casts only**: `x(F64)`, `p(CDC*)->body`. Prefix `(F64)x` is a compile
+   error — and postfix casts REINTERPRET bits, never convert values: use `ToF64/ToI64`
+   or mixed arithmetic to convert.
 4. **Precedence is not C's**: `` ` `` `>>` `<<` bind ABOVE `*`; `& ^ |` above `+ -`;
    `+ -` above `< ==`. `1<<n-1` == `(1<<n)-1`. `` ` `` is the power operator.
    Re-parenthesize all bit math when translating from C.
@@ -34,7 +36,8 @@ python3 skills/holyc/scripts/strip_doldoc.py vendor/TempleOS/Doc/HolyC.DD
    `GetMsg(,,1<<MSG_KEY_UP);`
 8. **`#include ""` only** (no `<>`), default ext `.HC.Z`, resolved against the task's
    CURRENT DIRECTORY (hence `Cd(__DIR__);;` — note the `;;`). No function-like
-   `#define`. `#exe {...}` runs code at compile time.
+   `#define`. `#exe {...}` runs code at compile time. **Never include OS headers** —
+   the entire Kernel/Adam API is already in scope in every task; demos include nothing.
 9. **Exceptions**: `throw('Char8')` is a function; `catch` takes no arg; read
    `Fs->except_ch`; set `Fs->catch_except=TRUE` (or call `PutExcept`) or it rethrows.
 10. **Chained comparisons are legal and idiomatic**: `if (0<=x<640)`.
@@ -84,12 +87,16 @@ MyDemo;
 
 ## Live reload (JIT redefinition — holytoy's mechanism)
 
-Re-`#include`/`ExeFile` the same file freely: new symbols **shadow** old ones in the
-task's hash table (by design, for exactly this workflow). But: old code is never freed
-(reclaimed at task death); previously captured function pointers — including an
-installed `draw_it` — keep hitting the OLD code until reassigned, so a reloaded file
-must re-run its `Fs->draw_it=&DrawIt;` line (the skeleton above does, since setup
-re-executes); shadowed globals lose their values. Details: references/runtime.md.
+JIT executes ONE top-level statement at a time — each is compiled and run before the
+next is lexed (`ExeCmdLine`, `Kernel/KTask.HC:302`), so `Cd(x);;` affects the next
+`#include`, and redefinitions take effect mid-file. Re-`#include`/`ExeFile` the same
+file freely: new symbols **shadow** old ones in the task's hash table (by design, for
+exactly this workflow). But: old code is never freed (reclaimed at task death); `&Fun`
+binds at the compile time of the code containing it, so previously captured function
+pointers — including an installed `draw_it` — keep hitting the OLD code until
+reassigned; a reloaded file must re-run its `Fs->draw_it=&DrawIt;` line (the skeleton
+above does, since setup re-executes); shadowed globals lose their values.
+Details: references/runtime.md.
 
 ## Reference files (read before writing code in that area)
 

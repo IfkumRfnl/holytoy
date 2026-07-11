@@ -28,6 +28,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOCK="$ROOT/images/qmp-install.sock"
 CHK="$OUT/install"
 QMP() { python3 "$ROOT/tools/qmp.py" "$SOCK" "$@"; }
+export QMP_KEY_DELAY=0.06   # a little slack so typed HolyC never outruns the shell
 
 HOOK_ONLY=0
 FORCE=0

@@ -65,6 +65,7 @@ U0 HtRun()
     HtReport("OK");
   else
     HtReport("ERR");
+  WinToTop;    //cover the AutoComplete standby popup for the screenshot
   if (!gui) {
     Sleep(HT_SHOW_MS);
     Reboot;
