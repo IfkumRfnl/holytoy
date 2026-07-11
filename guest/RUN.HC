@@ -65,8 +65,12 @@ U0 HtRun()
     HtReport("OK");
   else
     HtReport("ERR");
-  WinToTop;    //cover the AutoComplete standby popup for the screenshot
   if (!gui) {
+    //The AutoComplete standby window floats above everything; drop it so
+    //the screenshot shows only the user's pixels.
+    if (TaskValidate(ac.task))
+      Kill(ac.task);
+    WinToTop;
     Sleep(HT_SHOW_MS);
     Reboot;
   }
