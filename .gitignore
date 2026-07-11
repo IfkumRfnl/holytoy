@@ -1,0 +1,5 @@
+# Big binaries / VM state — never commit
+images/
+out/
+# Reference clone of TempleOS source (managed by a parallel agent)
+vendor/
