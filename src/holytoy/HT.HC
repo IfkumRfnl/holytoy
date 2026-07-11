@@ -7,6 +7,8 @@
 //(tools/scrtext.py) reads it exactly.
 //Harness-mode: install draw_it and return; guest/RUN.HC brackets us.
 
+#include "E:/HTMATH.HC"	//LUT sin/cos (16.16 turns); mkxfer.sh ships it always
+
 #define HT_VIEW_H	288	//viewport: full width x 288 window pixels (~60%)
 #define HT_SCALE	4	//shade once per 4x4 block (VISION.md render scale)
 #define HT_PANE_ROW	36	//first code-pane text row (window row, 8px cells)
@@ -22,6 +24,8 @@ U8 ht_src[HT_SRC_MAX];		//current shader source (the code pane content)
 U8 ht_status[96];		//status/error line text
 Bool ht_status_err;		//status line draws LTRED when TRUE
 Bool ht_cursor;			//GUI edit mode: draw an end-of-buffer cursor
+F64 ht_t0;			//shading-loop timing start (per frame)
+I64 ht_shade_ms;		//last frame's shading time, whole ms
 
 U8 *ht_src1=
 "U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)\n"
@@ -39,6 +43,18 @@ U8 *ht_src2=
 "{//sample 2: expanding bright rings\n"
 "  F64 dx=x-u->res_x/2.0,dy=y-u->res_y/2.0,t=u->i_time;\n"
 "  *out_color=(ToI64(Sqrt(dx*dx+dy*dy)*0.11-t*9.0)&7)+8;\n"
+"}\n";
+
+U8 *ht_src3=
+"U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)\n"
+"{//sample 3: fixed-point plasma (HTMATH 16.16-turn LUT sines)\n"
+"  I64 t16=ToI64(u->i_time*0x3000),v;\n"
+"  F64 fx=x,fy=y;\n"
+"  v=HTMSin16(x*449+t16)+\n"
+"    HTMSin16(y*323-t16*7/10)+\n"
+"    HTMSin16((x+y)*219+t16/2)+\n"
+"    HTMSin16(ToI64(Sqrt(fx*fx+fy*fy)*250.0)-t16*13/10);\n"
+"  *out_color=(v>>14)&15;\n"
 "}\n";
 
 U8 *ht_bad=
@@ -74,7 +90,7 @@ U0 HtDrawPane(CTask *task,CDC *dc)
   for (sy=y0;sy<y1;sy++)
     MemSet(&dc->body[sy*stride+task->pix_left],BLACK,task->pix_width);
   dc->color=LTGRAY;
-  GrPrint(dc,0,HT_PANE_ROW*8," HolyToy  F5 recompile  F1/F2 samples  ESC exit");
+  GrPrint(dc,0,HT_PANE_ROW*8," HolyToy %3dms  F5 recompile  F1-F3 samples  ESC exit",ht_shade_ms);
   dc->color=WHITE;
   row=HT_PANE_ROW+1;
   n=0;
@@ -160,6 +176,8 @@ U0 HtDrawIt(CTask *task,CDC *dc)
   ht_u.res_y=vh;
   ht_u.mouse_x=ms.pos.x-task->pix_left;
   ht_u.mouse_y=ms.pos.y-task->pix_top;
+  ht_t0=tS;			//time the shading work only, not the winmgr
+				//frame cadence (docs/notes/perf-floor.md)
   if (ht_fp) {
     for (by=0;by<nby;by++) {
       for (bx=0;bx<nbx;bx++) {
@@ -180,6 +198,7 @@ U0 HtDrawIt(CTask *task,CDC *dc)
       }
     }
   }
+  ht_shade_ms=ToI64((tS-ht_t0)*1000.0);
   HtDrawPane(task,dc);
 }
 
@@ -214,6 +233,11 @@ U0 HtSelfTest()
     "HT RECOVER OK\n";
   else
     "HT RECOVER FAIL\n";
+  if (HTMSin16(0x4000)==0x10000 && HTMCos16(0)==0x10000 &&
+      HTMSin16(0x8000)==0 && HtRecompile(ht_src3))
+    "HT MATH OK\n";		//exact LUT entries + F3 sample compiles
+  else
+    "HT MATH FAIL\n";
   HtRecompile(ht_bad);		//park in the survived-error demo state
 }
 
@@ -236,6 +260,7 @@ U0 HtInteract()
           switch (sc.u8[0]) {
             case SC_F1: HtRecompile(ht_src1); break;
             case SC_F2: HtRecompile(ht_src2); break;
+            case SC_F3: HtRecompile(ht_src3); break;
             case SC_F5: HtRecompile(ht_src);  break;
           }
           break;
@@ -266,6 +291,7 @@ Bool ht_gui=FileFind("E:/GUI.TXT");
 StrCpy(ht_src,ht_src1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
+HTMInit;			//build the LUT once, before any F3/GLSL shading
 Fs->draw_it=&HtDrawIt;
 if (ht_gui)
   HtInteract;
