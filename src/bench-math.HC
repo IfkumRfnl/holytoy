@@ -65,6 +65,11 @@ I64 HTMRad22(F64 r)
 CDC *bm_dc;      //gr.dc alias: persistent layer, body pokes are screen-absolute
 I64 bm_stride;
 
+//Plasma constants scaled to turns in each fixed format (set in BmMain).
+I64 bm_k1_16,bm_k2_16,bm_k3_16,   //0.043 / 0.031 / 0.021 rad per pixel
+    bm_k1_22,bm_k2_22,bm_k3_22;
+F64 bm_k4t16,bm_k4t22;            //0.024 rad per dist unit -> fixed turns
+
 U0 BmPalette()
 {//Cyclic sine RGB ramp (same as src/plasma.HC) so index wrap (&15) is seamless.
   I64 i;
@@ -124,6 +129,181 @@ U0 BmF64Frame160(F64 t)
   }
 }
 
+U0 BmF64FrameNd(F64 t)
+{//F64 formula minus the Sqrt-distance term (3 sines) -- the LUT variants
+ //keep that term in F64, so nd variants expose the unmasked sin delta.
+  I64 x,y,c;
+  F64 v,fx,fy;
+  for (y=0;y<BM_H;y++) {
+    fy=y;
+    for (x=0;x<BM_W;x++) {
+      fx=x;
+      v=Sin(fx*0.043+t)+
+        Sin(fy*0.031-t*0.7)+
+        Sin((fx+fy)*0.021+t*0.5);
+      c=ToI64(v*4.0)&15;
+      bm_dc->body[y*bm_stride+x]=c;
+    }
+  }
+}
+
+U0 BmFx16Frame(F64 t)
+{//Same formula/constants scaled to 16.16 turns; the Sqrt-distance term stays
+ //F64 (no fixed sqrt yet -- see the nd variants). c=(v>>14)&15 floors where
+ //ToI64 truncates; differs only for v<0 and &15 wraps either way.
+  I64 x,y,c,v,a2,a4;
+  I64 p1=HTMRad16(t),p2=HTMRad16(-0.7*t),p3=HTMRad16(0.5*t),p4=HTMRad16(-1.3*t);
+  F64 fx,fy;
+  for (y=0;y<BM_H;y++) {
+    fy=y;
+    a2=y*bm_k2_16+p2;
+    for (x=0;x<BM_W;x++) {
+      fx=x;
+      a4=ToI64(Sqrt(fx*fx+fy*fy)*bm_k4t16)+p4;
+      v=HTMSin16(x*bm_k1_16+p1)+HTMSin16(a2)+
+        HTMSin16((x+y)*bm_k3_16+p3)+HTMSin16(a4);
+      c=(v>>14)&15;
+      bm_dc->body[y*bm_stride+x]=c;
+    }
+  }
+}
+
+U0 BmFx16Frame160(F64 t)
+{//16.16 at render-scale: shade 160x120, fill 4x4 blocks.
+  I64 bx,by,x0,y0,dy,o,c,v,a2,a4;
+  I64 p1=HTMRad16(t),p2=HTMRad16(-0.7*t),p3=HTMRad16(0.5*t),p4=HTMRad16(-1.3*t);
+  F64 fx,fy;
+  for (by=0;by<120;by++) {
+    y0=by*4;
+    fy=y0;
+    a2=y0*bm_k2_16+p2;
+    for (bx=0;bx<160;bx++) {
+      x0=bx*4;
+      fx=x0;
+      a4=ToI64(Sqrt(fx*fx+fy*fy)*bm_k4t16)+p4;
+      v=HTMSin16(x0*bm_k1_16+p1)+HTMSin16(a2)+
+        HTMSin16((x0+y0)*bm_k3_16+p3)+HTMSin16(a4);
+      c=(v>>14)&15;
+      for (dy=0;dy<4;dy++) {
+        o=(y0+dy)*bm_stride+x0;
+        bm_dc->body[o]=c;
+        bm_dc->body[o+1]=c;
+        bm_dc->body[o+2]=c;
+        bm_dc->body[o+3]=c;
+      }
+    }
+  }
+}
+
+U0 BmFx16FrameNd(F64 t)
+{//16.16, distance term dropped (3 LUT sines, no F64 per pixel at all).
+  I64 x,y,c,v,a2;
+  I64 p1=HTMRad16(t),p2=HTMRad16(-0.7*t),p3=HTMRad16(0.5*t);
+  for (y=0;y<BM_H;y++) {
+    a2=y*bm_k2_16+p2;
+    for (x=0;x<BM_W;x++) {
+      v=HTMSin16(x*bm_k1_16+p1)+HTMSin16(a2)+
+        HTMSin16((x+y)*bm_k3_16+p3);
+      c=(v>>14)&15;
+      bm_dc->body[y*bm_stride+x]=c;
+    }
+  }
+}
+
+U0 BmFx22Frame(F64 t)
+{//10.22 turns; v is a sum of four 10.22 sines; v*4 -> c is (v>>20)&15.
+  I64 x,y,c,v,a2,a4;
+  I64 p1=HTMRad22(t),p2=HTMRad22(-0.7*t),p3=HTMRad22(0.5*t),p4=HTMRad22(-1.3*t);
+  F64 fx,fy;
+  for (y=0;y<BM_H;y++) {
+    fy=y;
+    a2=y*bm_k2_22+p2;
+    for (x=0;x<BM_W;x++) {
+      fx=x;
+      a4=ToI64(Sqrt(fx*fx+fy*fy)*bm_k4t22)+p4;
+      v=HTMSin22(x*bm_k1_22+p1)+HTMSin22(a2)+
+        HTMSin22((x+y)*bm_k3_22+p3)+HTMSin22(a4);
+      c=(v>>20)&15;
+      bm_dc->body[y*bm_stride+x]=c;
+    }
+  }
+}
+
+U0 BmFx22Frame160(F64 t)
+{//10.22 at render-scale.
+  I64 bx,by,x0,y0,dy,o,c,v,a2,a4;
+  I64 p1=HTMRad22(t),p2=HTMRad22(-0.7*t),p3=HTMRad22(0.5*t),p4=HTMRad22(-1.3*t);
+  F64 fx,fy;
+  for (by=0;by<120;by++) {
+    y0=by*4;
+    fy=y0;
+    a2=y0*bm_k2_22+p2;
+    for (bx=0;bx<160;bx++) {
+      x0=bx*4;
+      fx=x0;
+      a4=ToI64(Sqrt(fx*fx+fy*fy)*bm_k4t22)+p4;
+      v=HTMSin22(x0*bm_k1_22+p1)+HTMSin22(a2)+
+        HTMSin22((x0+y0)*bm_k3_22+p3)+HTMSin22(a4);
+      c=(v>>20)&15;
+      for (dy=0;dy<4;dy++) {
+        o=(y0+dy)*bm_stride+x0;
+        bm_dc->body[o]=c;
+        bm_dc->body[o+1]=c;
+        bm_dc->body[o+2]=c;
+        bm_dc->body[o+3]=c;
+      }
+    }
+  }
+}
+
+U0 BmFx22FrameNd(F64 t)
+{//10.22, distance term dropped.
+  I64 x,y,c,v,a2;
+  I64 p1=HTMRad22(t),p2=HTMRad22(-0.7*t),p3=HTMRad22(0.5*t);
+  for (y=0;y<BM_H;y++) {
+    a2=y*bm_k2_22+p2;
+    for (x=0;x<BM_W;x++) {
+      v=HTMSin22(x*bm_k1_22+p1)+HTMSin22(a2)+
+        HTMSin22((x+y)*bm_k3_22+p3);
+      c=(v>>20)&15;
+      bm_dc->body[y*bm_stride+x]=c;
+    }
+  }
+}
+
+U0 BmParity(F64 t)
+{//Visual parity: left half F64, right half 16.16 LUT, same t. Continuous
+ //pattern across the x=320 seam = the LUT matches. Left as the final frame
+ //for the host screenshot.
+  I64 x,y,c,v16,a2,a4;
+  I64 p1=HTMRad16(t),p2=HTMRad16(-0.7*t),p3=HTMRad16(0.5*t),p4=HTMRad16(-1.3*t);
+  F64 v,fx,fy;
+  for (y=0;y<BM_H;y++) {
+    fy=y;
+    a2=y*bm_k2_16+p2;
+    for (x=0;x<BM_W;x++) {
+      fx=x;
+      if (x<BM_W/2) {
+        v=Sin(fx*0.043+t)+
+          Sin(fy*0.031-t*0.7)+
+          Sin((fx+fy)*0.021+t*0.5)+
+          Sin(Sqrt(fx*fx+fy*fy)*0.024-t*1.3);
+        c=ToI64(v*4.0)&15;
+      } else {
+        a4=ToI64(Sqrt(fx*fx+fy*fy)*bm_k4t16)+p4;
+        v16=HTMSin16(x*bm_k1_16+p1)+HTMSin16(a2)+
+          HTMSin16((x+y)*bm_k3_16+p3)+HTMSin16(a4);
+        c=(v16>>14)&15;
+      }
+      bm_dc->body[y*bm_stride+x]=c;
+    }
+  }
+  for (y=0;y<8;y++)                    //seam ticks, top and bottom
+    bm_dc->body[y*bm_stride+BM_W/2]=WHITE;
+  for (y=BM_H-8;y<BM_H;y++)
+    bm_dc->body[y*bm_stride+BM_W/2]=WHITE;
+}
+
 U0 BmSanity()
 {//LUT sin at 0 / quarter / half turn: catches off-by-one table indexing.
   "BENCH sanity16 %d %d %d expect 0 65536 0\n",
@@ -164,8 +344,15 @@ I64 BmTime(I64 which)
   t0=tS;
   while (frames<BM_MAX_FRAMES) {
     switch (which) {
-      case 0: BmF64Frame(frames*0.1);    break;
-      case 1: BmF64Frame160(frames*0.1); break;
+      case 0: BmF64Frame(frames*0.1);     break;
+      case 1: BmF64Frame160(frames*0.1);  break;
+      case 2: BmFx16Frame(frames*0.1);    break;
+      case 3: BmFx16Frame160(frames*0.1); break;
+      case 4: BmFx22Frame(frames*0.1);    break;
+      case 5: BmFx22Frame160(frames*0.1); break;
+      case 6: BmF64FrameNd(frames*0.1);   break;
+      case 7: BmFx16FrameNd(frames*0.1);  break;
+      case 8: BmFx22FrameNd(frames*0.1);  break;
     }
     frames++;
     if (frames>=2 && tS-t0>=BM_MAX_SECS)
@@ -178,6 +365,14 @@ U0 BmMain()
 {
   BmPalette;
   HTMInit;                       //table generation excluded from timing
+  bm_k1_16=HTMRad16(0.043);
+  bm_k2_16=HTMRad16(0.031);
+  bm_k3_16=HTMRad16(0.021);
+  bm_k1_22=HTMRad22(0.043);
+  bm_k2_22=HTMRad22(0.031);
+  bm_k3_22=HTMRad22(0.021);
+  bm_k4t16=0.024*0x10000/(2*pi);
+  bm_k4t22=0.024*0x400000/(2*pi);
   bm_dc=DCAlias;
   bm_stride=bm_dc->width_internal;
   BmSanity;
@@ -186,6 +381,21 @@ U0 BmMain()
   Yield;
   "BENCH f64_160 %d ms/frame\n",BmTime(1);
   Yield;
+  "BENCH fx16_640 %d ms/frame\n",BmTime(2);
+  Yield;
+  "BENCH fx16_160 %d ms/frame\n",BmTime(3);
+  Yield;
+  "BENCH fx22_640 %d ms/frame\n",BmTime(4);
+  Yield;
+  "BENCH fx22_160 %d ms/frame\n",BmTime(5);
+  Yield;
+  "BENCH f64nd_640 %d ms/frame\n",BmTime(6);
+  Yield;
+  "BENCH fx16nd_640 %d ms/frame\n",BmTime(7);
+  Yield;
+  "BENCH fx22nd_640 %d ms/frame\n",BmTime(8);
+  Yield;
+  BmParity(1.0);
   DCDel(bm_dc);
 }
 
