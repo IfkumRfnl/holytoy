@@ -22,6 +22,7 @@ ACCEL_ARGS=""
 # Run-cycle timing (seconds)
 RUN_TIMEOUT=90            # hard kill for a normal run cycle
 FRAME_INTERVAL=0.7        # rolling screendump cadence
+ANIM_FRAMES=8             # trailing frames kept for out/anim.gif and the animates proof
 # (the guest-side screenshot hold is HT_SHOW_MS in guest/RUN.HC)
 
 # Output

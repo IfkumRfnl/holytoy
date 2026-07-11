@@ -11,19 +11,21 @@ make golden                      # one-time: ISO -> installed golden image (~1-2
 make run SRC=src/gradient.HC     # one cycle (~20 s): inject, boot, screenshot, extract logs
 make watch SRC=...               # re-run on every save
 make gui [SRC=...]               # visible QEMU window (WSLg); guest stays up, no auto-reboot
-make test                        # the three proofs (must stay green)
+make test                        # the four proofs (must stay green)
 make fetch-iso                   # (re)download images/TempleOS.ISO
 make clean                       # remove run artifacts; never touches the golden image
 ```
 
 ## Run artifacts (fixed paths, overwritten every run)
 
-| path             | contents                                                  |
-|------------------|-----------------------------------------------------------|
-| `out/latest.png` | last stable frame of the guest screen (640x480)           |
-| `out/screen.txt` | same frame as text — exact 8x8 glyph OCR, grep this first |
-| `out/guest.log`  | guest task-doc dump; compiler/runtime errors appear here  |
-| `out/status`     | raw guest status line (`OK` / `ERR` / `OK NOSRC`)         |
+| path                        | contents                                                  |
+|-----------------------------|-----------------------------------------------------------|
+| `out/latest.png`            | last stable frame of the guest screen (640x480)           |
+| `out/screen.txt`            | same frame as text — exact 8x8 glyph OCR, grep this first |
+| `out/guest.log`             | guest task-doc dump; compiler/runtime errors appear here  |
+| `out/status`                | raw guest status line (`OK` / `ERR` / `OK NOSRC`)         |
+| `out/frames/frame-NNNN.png` | rolling per-run screendumps (~0.7 s apart)                |
+| `out/anim.gif`              | trailing frames as GIF (best-effort; see `ANIM_FRAMES`)   |
 
 Exit codes of `tools/run.sh` / `make run`:
 
@@ -96,7 +98,8 @@ keyboard buffer holds early presses, duplicates are harmless).
   golden image (changing it requires `tools/install_os.sh --hook-only`).
 * mtools needs the repo config: `export MTOOLSRC=images/mtools.conf`
   (drive `x:` = the transfer disk).
-* All knobs live in `config.sh`.
+* All knobs live in `config.sh` (including `ANIM_FRAMES` for GIF/proof
+  trailing-frame count).
 
 ## Rebuilding the golden image
 

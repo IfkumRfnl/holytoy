@@ -32,7 +32,7 @@ fi
 SOCK="$ROOT/images/qmp-run.sock"
 FRAMES="$OUT/frames"
 mkdir -p "$OUT" "$FRAMES"
-rm -f "$LATEST_PNG" "$GUEST_LOG" "$OUT/status" "$FRAMES"/*.png "$SOCK"
+rm -f "$LATEST_PNG" "$GUEST_LOG" "$OUT/status" "$OUT/anim.gif" "$FRAMES"/*.png "$SOCK"
 
 "$ROOT/tools/mkxfer.sh" "$SRC"
 
@@ -75,6 +75,7 @@ while kill -0 "$QPID" 2>/dev/null; do
     fi
     if python3 "$ROOT/tools/qmp.py" "$SOCK" screendump "$FRAMES/cur.png" 2>/dev/null; then
         cp -f "$FRAMES/cur.png" "$FRAMES/last-good.png"
+        cp -f "$FRAMES/cur.png" "$(printf '%s/frame-%04d.png' "$FRAMES" "$N")"
         N=$((N+1))
     fi
     sleep "$FRAME_INTERVAL"
@@ -86,6 +87,16 @@ if [ -f "$FRAMES/last-good.png" ]; then
     cp -f "$FRAMES/last-good.png" "$LATEST_PNG"
     # Machine-readable view of the final screen (exact glyph OCR).
     python3 "$ROOT/tools/scrtext.py" "$LATEST_PNG" >"$OUT/screen.txt" 2>/dev/null || true
+fi
+
+# Best-effort animated GIF from the trailing frames — never affects exit codes.
+if ls "$FRAMES"/frame-*.png >/dev/null 2>&1; then
+    ANIM_DIR="$FRAMES/anim"; rm -rf "$ANIM_DIR"; mkdir -p "$ANIM_DIR"
+    i=0
+    for f in $(ls "$FRAMES"/frame-*.png | tail -n "$ANIM_FRAMES"); do
+        cp -f "$f" "$(printf '%s/%03d.png' "$ANIM_DIR" "$i")"; i=$((i+1))
+    done
+    ffmpeg -v quiet -y -framerate 2 -i "$ANIM_DIR/%03d.png" "$OUT/anim.gif" || true
 fi
 
 # Pull guest-written files off the transfer disk.

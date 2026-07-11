@@ -14,7 +14,7 @@ the audit.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001  | Harness animation capture: frames, GIF, "animates" proof | P1 | S | — | TODO |
+| 001  | Harness animation capture: frames, GIF, "animates" proof | P1 | S | — | DONE (gradient DISTINCT=2 on negative check) |
 | 002  | HolyToy in-guest app skeleton spike (VISION step 1) | P1 | L | 001 | TODO |
 | 003  | Perf-floor spike: F64 vs LUT fixed-point, pick format (step 2) | P2 | M | — | TODO |
 | 004  | GLSL→HolyC transpiler prototype `tools/glsl2hc.py` (step 3) | P2 | L | — | TODO |

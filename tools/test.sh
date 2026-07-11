@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# holytoy proof suite. Three round-trips through the real VM:
+# holytoy proof suite. Four round-trips through the real VM:
 #   1. smoke     guest writes a marker string back to the host
 #   2. gradient  screenshot contains an actual multi-color gradient
 #   3. error     deliberate HolyC syntax error -> nonzero exit, message on host
-# Exit 0 only if all three behave.
+#   4. animate   plasma yields distinct trailing frames + out/anim.gif
+# Exit 0 only if all four behave.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -58,6 +59,19 @@ if [ "$RC" = 1 ]; then
     fi
 else
     bad "error: expected exit 1, got $RC"
+fi
+
+# ── 4. animate: plasma yields distinct trailing frames + GIF ───────────
+if tools/run.sh src/plasma.HC; then
+    DISTINCT=$(ls "$OUT"/frames/frame-*.png 2>/dev/null | tail -n 6 |
+               xargs -r md5sum | awk '{print $1}' | sort -u | wc -l)
+    if [ "$DISTINCT" -ge 3 ] && [ -f "$OUT/anim.gif" ]; then
+        ok "animate: $DISTINCT distinct trailing frames and $OUT/anim.gif"
+    else
+        bad "animate: need >=3 distinct frames and anim.gif (got DISTINCT=$DISTINCT)"
+    fi
+else
+    bad "animate: run.sh exited $?"
 fi
 
 echo "── $PASS passed, $FAIL failed ──"
