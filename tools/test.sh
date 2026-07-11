@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# holytoy proof suite. Five round-trips through the real VM:
+# holytoy proof suite. Six round-trips through the real VM:
 #   1. smoke      guest marker round-trip
 #   2. gradient   screenshot dimensions and colors
 #   3. error      guest compiler failure surfaces as exit 1
 #   4. animate    plasma produces distinct frames and a GIF
 #   5. parallel   simultaneous VMs keep disks/artifacts isolated
+#   6. holytoy    app skeleton: live recompile self-test + animating viewport
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -141,6 +142,28 @@ if [ "$RC_A" = 0 ] && [ "$RC_B" = 0 ] &&
     ok "parallel: isolated markers on simultaneous slots $SLOT_A and $SLOT_B"
 else
     bad "parallel: rc=$RC_A/$RC_B marker='$GOT_A'/'$GOT_B' slot=$SLOT_A/$SLOT_B (runs $RD_A $RD_B)"
+fi
+
+# 6. holytoy: app skeleton recompiles shaders live and keeps animating
+RD="$(new_run_path holytoy)"
+if RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC; then
+    frame_files=("$RD"/frames/frame-*.png)
+    if [ -e "${frame_files[0]}" ]; then
+        DISTINCT="$(printf '%s\0' "${frame_files[@]}" | tail -z -n 6 |
+            xargs -0 -r md5sum | awk '{print $1}' | sort -u | wc -l)"
+    else
+        DISTINCT=0
+    fi
+    if grep -q "HT SWAP OK" "$RD/guest.log" &&
+       grep -q "HT ERRSURVIVE OK" "$RD/guest.log" &&
+       [ "$DISTINCT" -ge 3 ]; then
+        ok "holytoy: shader swap + error survival markers, $DISTINCT distinct frames"
+    else
+        bad "holytoy: missing HT markers or <3 distinct frames (got $DISTINCT; run $RD)"
+    fi
+else
+    RC=$?
+    bad "holytoy: run.sh exited $RC (run $RD)"
 fi
 
 echo "-- $PASS passed, $FAIL failed --"
