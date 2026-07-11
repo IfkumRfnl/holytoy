@@ -14,7 +14,7 @@
 #define HT_PANE_ROW	36	//first code-pane text row (window row, 8px cells)
 #define HT_SRC_ROWS	20	//source lines shown in the pane
 #define HT_STATUS_ROW	58	//status/error line (last window row)
-#define HT_SRC_MAX	4096
+#define HT_SRC_MAX	8192	//transpiled GLSL starts ~2 KB; static global, cheap
 
 class CHtUniforms { F64 i_time; I64 i_frame; I64 res_x,res_y; I64 mouse_x,mouse_y; };
 
@@ -202,6 +202,26 @@ U0 HtDrawIt(CTask *task,CDC *dc)
   HtDrawPane(task,dc);
 }
 
+Bool HtLoadShader()
+{//Compile a host-transpiled shader off the transfer disk, if present.
+ //FileRead NUL-terminates (Kernel/BlkDev/FileSysFAT.HC FAT32FileRead).
+  U8 *buf;
+  I64 sz;
+  Bool ok=FALSE;
+  if (!FileFind("E:/SHADER.HC"))
+    return FALSE;
+  buf=FileRead("E:/SHADER.HC",&sz);
+  if (buf) {
+    ok=HtRecompile(buf);
+    Free(buf);
+  }
+  if (ok)
+    "HT GLSL OK\n";
+  else
+    "HT GLSL FAIL\n";
+  return TRUE;
+}
+
 U0 HtSelfTest()
 {//Headless proof driven by guest/RUN.HC; markers land in guest.log via
  //the task-doc dump.  Leaves the failed-compile state on screen at the
@@ -293,7 +313,13 @@ HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
 HTMInit;			//build the LUT once, before any F3/GLSL shading
 Fs->draw_it=&HtDrawIt;
+Bool ht_had_shader=HtLoadShader();
 if (ht_gui)
-  HtInteract;
+  HtInteract;			//shader (if any) already live in the viewport
+else if (ht_had_shader)
+  Sleep(3000);			//headless GLSL mode: just let the rolling
+				//screendumps capture the animating shader;
+				//the recompile markers are the no-shader
+				//run's job (keep the two modes separate)
 else
   HtSelfTest;
