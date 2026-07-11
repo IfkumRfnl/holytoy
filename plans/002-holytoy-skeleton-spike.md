@@ -7,10 +7,12 @@
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat 74e018b..HEAD -- src/ guest/ docs/VISION.md tools/test.sh`
-> If any in-scope file changed since this plan was written, compare the
-> "Current state" excerpts against the live code before proceeding; on a
-> mismatch, treat it as a STOP condition.
+> **Drift check (run first)**: `git diff --stat a27d114..HEAD -- src/ guest/ docs/VISION.md tools/test.sh tools/run.sh config.sh`
+> If any in-scope file changed since this plan's verification refresh, compare
+> the "Current state" excerpts against the live code before proceeding; on a
+> mismatch, treat it as a STOP condition. (Planned at `74e018b`; verification
+> commands refreshed at `a27d114`, after plan 005 replaced global `out/`
+> artifacts with per-run `RUN_DIR` directories.)
 
 ## Status
 
@@ -88,25 +90,35 @@ cached bitmap vs blitting a CDC sprite — VISION.md:124-126).
 - Guest-code rules (AGENTS.md "Guest-code rules" — violating these costs
   real debugging time): ASCII only; transfer-disk filenames single-dot
   UPPERCASE 8.3; a hard pointer fault drops into the debugger and the host
-  times out with exit 2 and a register dump in `out/screen.txt`.
+  times out with exit 2 and a register dump in the run's `screen.txt`.
 
-- Harness facts for proofs: `make run SRC=file.HC` injects the file as
-  `E:/MAIN.HC` and executes it fullscreen; `out/screen.txt` is an exact OCR
-  of the final screen (grep it); `out/guest.log` carries everything the task
-  printed; `out/frames/frame-*.png` (after plan 001) are rolling per-run
-  frames ~0.7 s apart. Long runs: raise `RUN_TIMEOUT` in `config.sh`
-  temporarily rather than fighting the 90 s default.
+- Harness facts for proofs (post plan 005 — there are NO global `out/`
+  artifact paths): `make run SRC=file.HC` injects the file as `E:/MAIN.HC`,
+  executes it fullscreen, and prints its authoritative result directory as
+  the first stdout line (`RUN_DIR=/abs/path/out/runs/run-...`). Inside it:
+  `screen.txt` is an exact OCR of the final screen (grep it); `guest.log`
+  carries everything the task printed; `frames/frame-*.png` are rolling
+  per-run frames ~0.7 s apart; `latest.png` is the final stable frame.
+  For scripted verification, reserve the directory yourself so no output
+  parsing is needed: `RD="$(mktemp -d "$PWD/out/runs/verify-002-XXXXXX")";
+  RUN_DIR="$RD" tools/run.sh src/foo.HC` (must be a new or empty direct
+  child of `out/runs/`; run.sh locks it; directories are single-use — take
+  a fresh one per invocation). Long runs: raise `RUN_TIMEOUT` in
+  `config.sh` temporarily rather than fighting the 90 s default.
 
 ## Commands you will need
 
+All run commands below assume a fresh reserved run directory:
+`RD="$(mktemp -d "$PWD/out/runs/verify-002-XXXXXX")"` (new `$RD` per run).
+
 | Purpose | Command | Expected on success |
 |---------|---------|---------------------|
-| Run the app headless | `make run SRC=src/holytoy/HT.HC` | exit 0, artifacts in `out/` |
-| Read the screen | `grep STRING out/screen.txt` | match |
-| Read app prints | `grep STRING out/guest.log` | match |
-| Distinct frames | `ls out/frames/frame-*.png \| tail -n 6 \| xargs -r md5sum \| awk '{print $1}' \| sort -u \| wc -l` | ≥3 for an animating viewport |
-| Interactive session | `make gui SRC=src/holytoy/HT.HC` | QEMU window, app running (needs WSLg) |
-| Regression | `make test` | all proofs pass |
+| Run the app headless | `RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC` | exit 0, artifacts in `$RD` |
+| Read the screen | `grep STRING "$RD/screen.txt"` | match |
+| Read app prints | `grep STRING "$RD/guest.log"` | match |
+| Distinct frames | `ls "$RD"/frames/frame-*.png \| tail -n 6 \| xargs -r md5sum \| awk '{print $1}' \| sort -u \| wc -l` | ≥3 for an animating viewport |
+| Interactive session | `make gui SRC=src/holytoy/HT.HC` | QEMU window, app running (needs WSLg); prints its own `RUN_DIR=` |
+| Regression | `make test` | all proofs pass (five today; six once Step 5 lands) |
 
 ## Suggested executor toolkit
 
@@ -169,9 +181,9 @@ this repo. Render at reduced scale if a full-res loop is visibly slow
 real perf work is plan 003. Update `u->i_time` from `tS` and `u->i_frame`
 per call.
 
-**Verify**: `make run SRC=src/holytoy/HT.HC` → exit 0; distinct-frames
-pipeline (table above) ≥3; `python3 tools/imginfo.py out/latest.png` →
-`640 480 N` with N ≥ 8.
+**Verify**: fresh `$RD`; `RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC` →
+exit 0; distinct-frames pipeline (table above) ≥3;
+`python3 tools/imginfo.py "$RD/latest.png"` → `640 480 N` with N ≥ 8.
 
 ### Step 2: Code pane — render the shader source in the bottom region
 
@@ -187,9 +199,9 @@ record in `docs/notes/step1-skeleton.md` what you tried and why the winner
 won. The pane must show at least the first ~10 lines of the current shader
 source and have room for an error line.
 
-**Verify**: `make run SRC=src/holytoy/HT.HC` → exit 0, and
-`grep -i "MainImage" out/screen.txt` matches (the source text is on screen
-together with the animating viewport).
+**Verify**: fresh `$RD`; `RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC` →
+exit 0, and `grep -i "MainImage" "$RD/screen.txt"` matches (the source text
+is on screen together with the animating viewport).
 
 ### Step 3: Recompile path — swap the shader from a string at runtime
 
@@ -209,9 +221,9 @@ the harness, it (1) renders shader v1 for ~2 s, (2) calls
 caught the exception and the viewport is still animating, then keeps
 rendering v2 until the harness screenshots.
 
-**Verify**: `make run SRC=src/holytoy/HT.HC` → exit 0;
-`grep "HT SWAP OK" out/guest.log` and `grep "HT ERRSURVIVE OK"
-out/guest.log` both match; distinct-frames ≥3.
+**Verify**: fresh `$RD`; `RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC` →
+exit 0; `grep "HT SWAP OK" "$RD/guest.log"` and `grep "HT ERRSURVIVE OK"
+"$RD/guest.log"` both match; distinct-frames ≥3.
 
 ### Step 4: Interactive editing — the smallest live loop
 
@@ -226,22 +238,25 @@ editor is follow-up work, record it as such in the notes. Test it live with
 
 **Verify**: `make gui` session (if WSLg available): pressing the trigger
 key recompiles — describe observed behavior in
-`docs/notes/step1-skeleton.md`. Headless regression: `make run
-SRC=src/holytoy/HT.HC` still exits 0 with both `HT * OK` markers.
+`docs/notes/step1-skeleton.md`. Headless regression: a fresh-`$RD` run of
+`src/holytoy/HT.HC` still exits 0 with both `HT * OK` markers in its
+`guest.log`.
 
 ### Step 5: Add the app proof to `tools/test.sh` and write the notes
 
-New proof following the existing `ok`/`bad` pattern: run
-`tools/run.sh src/holytoy/HT.HC`; assert exit 0, both `HT SWAP OK` and
-`HT ERRSURVIVE OK` in `$GUEST_LOG`, and ≥3 distinct trailing frames.
+New proof following the existing `ok`/`bad` + `new_run_path` pattern
+(see tools/test.sh proofs 1–5): reserve `RD="$(new_run_path holytoy)"`, run
+`RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC`; assert exit 0, both
+`HT SWAP OK` and `HT ERRSURVIVE OK` in `$RD/guest.log`, and ≥3 distinct
+trailing frames in `$RD/frames/`.
 Finish `docs/notes/step1-skeleton.md`: decisions on (a) code-pane
 mechanism, (b) viewport presentation (what you used, what you rejected,
 observed cost — this answers VISION.md:124-126), (c) recompile trigger,
 (d) explicit list of what step 1 still lacks (real mouse-driven editing,
 render-scale toggle, ms/frame readout — the latter two are plan 003).
 
-**Verify**: `make test` → all proofs pass (the pre-existing ones plus this
-one), exit 0.
+**Verify**: `make test` → all proofs pass (the pre-existing five plus this
+one — `6 passed, 0 failed`), exit 0.
 
 ## Test plan
 
@@ -258,11 +273,11 @@ one), exit 0.
 
 Machine-checkable. ALL must hold:
 
-- [ ] `make run SRC=src/holytoy/HT.HC` exits 0
-- [ ] `grep "HT SWAP OK" out/guest.log` and `grep "HT ERRSURVIVE OK" out/guest.log` both match
-- [ ] `grep -i "MainImage" out/screen.txt` matches (code pane visible)
+- [ ] fresh `$RD`: `RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC` exits 0
+- [ ] `grep "HT SWAP OK" "$RD/guest.log"` and `grep "HT ERRSURVIVE OK" "$RD/guest.log"` both match
+- [ ] `grep -i "MainImage" "$RD/screen.txt"` matches (code pane visible)
 - [ ] Distinct trailing frames ≥3 (animating viewport at screenshot time)
-- [ ] `make test` exits 0 (all proofs including the new one, twice in a row)
+- [ ] `make test` exits 0 (`6 passed, 0 failed`, twice in a row)
 - [ ] `docs/notes/step1-skeleton.md` records the three design decisions
 - [ ] `git status` shows nothing modified outside the in-scope list
 - [ ] `plans/README.md` status row updated
@@ -274,9 +289,9 @@ Stop and report back (do not improvise) if:
 - The `ExePutS*` symbol you find in vendor source cannot compile a string
   in-task with catchable compiler exceptions (i.e. the VISION.md:42-44
   premise fails in practice). Report exactly what you ran and what the
-  guest showed (`out/screen.txt`).
+  guest showed (the run's `screen.txt`).
 - A hard fault drops the guest into the debugger (exit 2 + register dump in
-  `out/screen.txt`) more than three times on the same step — capture the
+  the run's `screen.txt`) more than three times on the same step — capture the
   dump and report rather than shotgun-debugging.
 - Step 2: none of the three code-pane approaches shows text alongside an
   animating viewport after a genuine attempt at each — report what each did.

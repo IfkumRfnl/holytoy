@@ -7,10 +7,14 @@
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat 74e018b..HEAD -- tools/ docs/VISION.md tests/`
-> If any in-scope file changed since this plan was written, compare the
-> "Current state" excerpts against the live code before proceeding; on a
-> mismatch, treat it as a STOP condition.
+> **Drift check (run first)**: `git diff --stat a27d114..HEAD -- tools/ docs/VISION.md tests/`
+> If any in-scope file changed since this plan's verification refresh, compare
+> the "Current state" excerpts against the live code before proceeding; on a
+> mismatch, treat it as a STOP condition. (Planned at `74e018b`; verification
+> commands refreshed at `a27d114`, after plan 005 replaced global `out/`
+> artifacts with per-run `RUN_DIR` directories and grew `make test` to five
+> proofs — `tools/` also gained `run-common.sh`, `prune-runs.sh`,
+> `test-run-locks.sh` since the original baseline.)
 
 ## Status
 
@@ -45,7 +49,8 @@ subset is small *precisely so the in-guest HolyC port is realistic*
 ## Current state
 
 - `tools/` contains no transpiler: `gui.sh imginfo.py install_os.sh
-  mkxfer.sh qmp.py run.sh scrtext.py test.sh watch.sh`.
+  mkxfer.sh prune-runs.sh qmp.py run-common.sh run.sh scrtext.py test.sh
+  test-run-locks.sh watch.sh`.
 - The GLSL subset is specified at docs/VISION.md:45-51:
   - types `float/vec2/vec3/vec4/int/bool` + swizzles (`p.xy`, `c.rgb`)
   - arithmetic incl. componentwise vector ops, `mat2` at most
@@ -68,11 +73,17 @@ subset is small *precisely so the in-guest HolyC port is realistic*
   no operator overloading, so vec ops become emitted helper functions or
   per-component expressions; `U0` is the void-like return; sources must be
   **pure ASCII**. Working HolyC style to imitate: `src/plasma.HC`.
-- Harness facts for the e2e proof: `make run SRC=file.HC` injects the file
-  as `E:/MAIN.HC` and runs it fullscreen under try/catch; exit 0 = compiled
-  and ran; exit 1 = HolyC compile/runtime error with the message in
-  `out/guest.log`; `python3 tools/imginfo.py out/latest.png` prints
-  `WIDTH HEIGHT NCOLORS`.
+- Harness facts for the e2e proof (post plan 005 — there are NO global
+  `out/` artifact paths): `make run SRC=file.HC` injects the file as
+  `E:/MAIN.HC` and runs it fullscreen under try/catch, printing its result
+  directory as the first stdout line (`RUN_DIR=/abs/path/out/runs/run-...`);
+  exit 0 = compiled and ran; exit 1 = HolyC compile/runtime error with the
+  message in that run's `guest.log`;
+  `python3 tools/imginfo.py "$RD/latest.png"` prints `WIDTH HEIGHT NCOLORS`.
+  For scripted verification, reserve the directory yourself:
+  `RD="$(mktemp -d "$PWD/out/runs/verify-004-XXXXXX")";
+  RUN_DIR="$RD" tools/run.sh out/g.HC` (must be a new or empty direct child
+  of `out/runs/`; directories are single-use — take a fresh `$RD` per run).
 - Python conventions in this repo: stdlib-only, `#!/usr/bin/env python3`,
   module docstring with usage and exit codes — see `tools/qmp.py:1-13` and
   `tools/scrtext.py`. There is no pip/venv/pytest anywhere; keep it that
@@ -86,9 +97,9 @@ subset is small *precisely so the in-guest HolyC port is realistic*
 |---------|---------|---------------------|
 | Unit tests (no VM) | `python3 tools/test_glsl2hc.py` | `OK (N tests)`-style summary, exit 0 |
 | Transpile | `python3 tools/glsl2hc.py tests/glsl/circle.glsl -o out/circle.HC` | exit 0, ASCII HolyC emitted |
-| E2E on TempleOS | `make run SRC=out/circle.HC` | exit 0 |
-| Screenshot facts | `python3 tools/imginfo.py out/latest.png` | `640 480 N`, N ≥ 8 |
-| Regression | `make test` | all proofs pass |
+| E2E on TempleOS | fresh `$RD`; `RUN_DIR="$RD" tools/run.sh out/circle.HC` | exit 0, artifacts in `$RD` |
+| Screenshot facts | `python3 tools/imginfo.py "$RD/latest.png"` | `640 480 N`, N ≥ 8 |
+| Regression | `make test` | `5 passed, 0 failed` |
 
 ## Suggested executor toolkit
 
@@ -186,17 +197,18 @@ Fixtures to include in `tests/glsl/`:
   loop, and a user-defined function (exercises the widest subset slice)
 
 **Verify**:
-`python3 tools/glsl2hc.py tests/glsl/gradient.glsl --runner static -o out/g.HC && make run SRC=out/g.HC`
-→ exit 0 and `python3 tools/imginfo.py out/latest.png` → `640 480 N` with
-N ≥ 8. Repeat for `circle.glsl` (its screenshot has ≥2 colors and the
-proof is exit 0 + no `ERR` in `out/status`).
+`python3 tools/glsl2hc.py tests/glsl/gradient.glsl --runner static -o out/g.HC`
+then fresh `$RD`; `RUN_DIR="$RD" tools/run.sh out/g.HC` → exit 0 and
+`python3 tools/imginfo.py "$RD/latest.png"` → `640 480 N` with N ≥ 8.
+Repeat for `circle.glsl` with its own fresh `$RD` (its screenshot has ≥2
+colors and the proof is exit 0 + no `ERR` in `$RD/status`).
 
 ### Step 4: E2E for the widest fixture + coverage notes
 
 Run `plasma.glsl` end-to-end the same way — this is the real test that
 emitted user functions, loops, and swizzles all compile under the actual
 TempleOS compiler. Any exit 1 here: read the HolyC compiler message in
-`out/guest.log`, fix the *emitter* (never hand-edit the emitted file), add
+that run's `guest.log`, fix the *emitter* (never hand-edit the emitted file), add
 a unit test pinning the fix. Then write `docs/notes/glsl2hc.md`: the
 feature-coverage table (each VISION.md:45-51 item → supported/deferred),
 semantic deviations, and the shortlist of what the in-guest HolyC port of
@@ -216,10 +228,12 @@ your change).
   for the three fixtures; ASCII assertion; `--runner none` output contains
   no runner code.
 - E2E (VM, manual in this plan, not added to `make test`): the three
-  fixtures via `--runner static` as in Steps 3–4. Not in `make test`
-  because each costs a ~20 s VM cycle and the transpiler has no in-repo
-  consumers yet; revisit when plan 002 integrates it (note this in
-  docs/notes/glsl2hc.md).
+  fixtures via `--runner static` as in Steps 3–4, each in its own reserved
+  `RUN_DIR`. Not in `make test` because each costs a ~20 s VM cycle and the
+  transpiler has no in-repo consumers yet; revisit when plan 002 integrates
+  it (note this in docs/notes/glsl2hc.md). Parallel agents may be running
+  VMs concurrently — this is safe (bounded slots), but expect occasional
+  slot waits.
 - Pattern to model tests on: there is no existing Python test file; use
   stdlib `unittest`, mirror the CLI conventions of `tools/qmp.py`.
 
@@ -229,10 +243,10 @@ Machine-checkable. ALL must hold:
 
 - [ ] `python3 tools/test_glsl2hc.py` exits 0, ≥15 tests
 - [ ] All three fixtures transpile with exit 0; out-of-subset input exits 1 with a `file:line` diagnostic
-- [ ] `gradient.glsl` and `plasma.glsl` e2e runs exit 0; gradient screenshot has ≥8 colors per `tools/imginfo.py`
+- [ ] `gradient.glsl` and `plasma.glsl` e2e runs exit 0; gradient run's `latest.png` has ≥8 colors per `tools/imginfo.py`
 - [ ] Emitted output is pure ASCII (`LC_ALL=C grep -P '[^\x00-\x7F]' out/g.HC` → no output)
 - [ ] `docs/notes/glsl2hc.md` has the coverage table
-- [ ] `make test` exits 0
+- [ ] `make test` exits 0 (`5 passed, 0 failed`)
 - [ ] `git status` shows nothing modified outside the in-scope list
 - [ ] `plans/README.md` status row updated
 
@@ -242,8 +256,8 @@ Stop and report back (do not improvise) if:
 
 - An emitted construct that `skills/holyc` says is legal fails to compile
   on the real TempleOS compiler twice (skill/reality divergence) — report
-  the construct, the emitted HolyC, and the compiler message from
-  `out/guest.log`; the skill maintainers (parallel agent session) need to
+  the construct, the emitted HolyC, and the compiler message from the
+  run's `guest.log`; the skill maintainers (parallel agent session) need to
   know.
 - The static-frame run at `--scale 4` exceeds `RUN_TIMEOUT` — report the
   timing; do not silently drop to `--scale 8`.

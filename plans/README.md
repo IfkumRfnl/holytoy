@@ -16,7 +16,7 @@ sessions.
 |------|-------|----------|--------|------------|--------|
 | 001  | Harness animation capture: frames, GIF, "animates" proof | P1 | S | — | DONE (gradient DISTINCT=2 on negative check) |
 | 005  | Isolated run directories and bounded parallel VMs | P1 | M | 001 | DONE (locking preflight; parallel slots 2 and 1) |
-| 002  | HolyToy in-guest app skeleton spike (VISION step 1) | P1 | L | 001, 005 | TODO |
+| 002  | HolyToy in-guest app skeleton spike (VISION step 1) | P1 | L | 001, 005 | IN PROGRESS (delegated executor, branch `advisor/002-holytoy-skeleton`) |
 | 003  | Perf-floor spike: F64 vs LUT fixed-point, pick format (step 2) | P2 | M | — | TODO |
 | 004  | GLSL→HolyC transpiler prototype `tools/glsl2hc.py` (step 3) | P2 | L | 005 | TODO |
 
@@ -30,11 +30,10 @@ REJECTED (with one-line rationale)
   mechanism. 001 is small — do it first.
 - 003 is parallel-safe with everything (all-new files). Its result flows
   into 002's follow-ups: 002 adopts its HTMATH library and ms/frame readout.
-- 005 should precede 002 and 004. Both older plans contain verification
-  commands that read global `out/latest.png`, `out/guest.log`, or
-  `out/screen.txt`; refresh those commands to consume their own `RUN_DIR`
-  before execution. Plan 002 also overlaps `tools/test.sh` and `config.sh`,
-  so implementing it concurrently with 005 would create edit conflicts.
+- 005 should precede 002 and 004 — satisfied: 005 is DONE and both older
+  plans' verification commands were refreshed at `a27d114` (2026-07-11) to
+  reserve and consume their own `RUN_DIR` instead of the retired global
+  `out/latest.png` / `out/guest.log` / `out/screen.txt` paths.
 - 004's emitted shaders later flow into 002's `HtRecompile` path. After its
   artifact commands are refreshed, its all-new implementation files remain
   parallel-safe with 002 and 003.
