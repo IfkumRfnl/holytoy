@@ -7,14 +7,15 @@
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat a27d114..HEAD -- tools/ docs/VISION.md tests/`
+> **Drift check (run first)**: `git diff --stat 091deb4..HEAD -- tools/ docs/VISION.md tests/`
 > If any in-scope file changed since this plan's verification refresh, compare
 > the "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition. (Planned at `74e018b`; verification
-> commands refreshed at `a27d114`, after plan 005 replaced global `out/`
-> artifacts with per-run `RUN_DIR` directories and grew `make test` to five
-> proofs — `tools/` also gained `run-common.sh`, `prune-runs.sh`,
-> `test-run-locks.sh` since the original baseline.)
+> commands refreshed after plan 005 replaced global `out/` artifacts with
+> per-run `RUN_DIR` directories, and again after plan 002 (`091deb4`) grew
+> `make test` to six proofs — `tools/` gained `run-common.sh`,
+> `prune-runs.sh`, `test-run-locks.sh`, and the holytoy proof in `test.sh`
+> since the original baseline.)
 
 ## Status
 
@@ -99,7 +100,7 @@ subset is small *precisely so the in-guest HolyC port is realistic*
 | Transpile | `python3 tools/glsl2hc.py tests/glsl/circle.glsl -o out/circle.HC` | exit 0, ASCII HolyC emitted |
 | E2E on TempleOS | fresh `$RD`; `RUN_DIR="$RD" tools/run.sh out/circle.HC` | exit 0, artifacts in `$RD` |
 | Screenshot facts | `python3 tools/imginfo.py "$RD/latest.png"` | `640 480 N`, N ≥ 8 |
-| Regression | `make test` | `5 passed, 0 failed` |
+| Regression | `make test` | `6 passed, 0 failed` |
 
 ## Suggested executor toolkit
 
@@ -246,7 +247,7 @@ Machine-checkable. ALL must hold:
 - [ ] `gradient.glsl` and `plasma.glsl` e2e runs exit 0; gradient run's `latest.png` has ≥8 colors per `tools/imginfo.py`
 - [ ] Emitted output is pure ASCII (`LC_ALL=C grep -P '[^\x00-\x7F]' out/g.HC` → no output)
 - [ ] `docs/notes/glsl2hc.md` has the coverage table
-- [ ] `make test` exits 0 (`5 passed, 0 failed`)
+- [ ] `make test` exits 0 (`6 passed, 0 failed`)
 - [ ] `git status` shows nothing modified outside the in-scope list
 - [ ] `plans/README.md` status row updated
 
