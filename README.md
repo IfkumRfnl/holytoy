@@ -87,7 +87,7 @@ troubleshooting, golden-image surgery — lives in
 
 A host-only preflight first proves allocation/pruning atomicity, isolates
 individual deletion failures, and runs the GLSL transpiler's unit tests.
-Then nine real TempleOS VM proofs run:
+Then ten real TempleOS VM proofs run:
 
 1. a marker string round-trips host → guest → host;
 2. the gradient renders at 640×480 with 16 colors, screenshot verified;
@@ -103,7 +103,9 @@ Then nine real TempleOS VM proofs run:
 8. a `.glsl` file handed to the runner is transpiled, injected into the
    app, and animates in its viewport;
 9. a host-injected mouse move lands on a target pixel (±16) and the
-   guest observes the click.
+   guest observes the click;
+10. a static GLSL gradient has deterministic viewport pixels, spatially
+    varying ordered dithering, and a sane 16-color gamut.
 
 ## Credits
 

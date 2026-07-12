@@ -99,6 +99,8 @@ pointer-free.
 - LUT/fixed-point math — landed: plan 003 built `HTMATH.HC`, plan 006
   wired it into the app (`#include "E:/HTMATH.HC"`, F3 fixed-point plasma
   sample, `HT MATH OK` self-test marker).
-- Palette control per shader (samples use the std palette so UI colors
-  stay stable; plasma.HC-style palette ramps are a step-4 polish item).
+- Palette quantization moved out of shaders into the renderer in plan 007:
+  the RGBA shader ABI feeds `HTRENDER.HC`, which owns standard-palette
+  mapping and deterministic Bayer dithering. Custom palette modes remain a
+  step-4 polish item.
 - Shader load/save on the transfer disk — VISION step 4.

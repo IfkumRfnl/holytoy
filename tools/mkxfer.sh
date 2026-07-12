@@ -35,6 +35,7 @@ if [ -n "$SRC" ]; then
     mcopy -o "$SRC" x:/MAIN.HC
 fi
 mcopy -o "$ROOT/src/holytoy/HTMATH.HC" x:/HTMATH.HC
+mcopy -o "$ROOT/src/holytoy/HTRENDER.HC" x:/HTRENDER.HC
 # Transpiled shader for the app: HT.HC compiles it at startup when present.
 if [ -n "${HOLYTOY_SHADER:-}" ]; then
     mcopy -o "$HOLYTOY_SHADER" x:/SHADER.HC

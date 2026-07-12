@@ -167,17 +167,24 @@ class TestEmitter(unittest.TestCase):
                 out = transpile(self.fixture(name), filename=name,
                                 runner=runner)
                 self.assertTrue(all(ord(c) < 128 for c in out), name)
-                self.assertIn("U0 MainImage(CHtUniforms *u,I64 x,I64 y,"
-                              "U8 *out_color)", out)
+                if runner == "static":
+                    self.assertIn("U0 MainImage(CHtUniforms *u,I64 x,I64 y,"
+                                  "U8 *out_color)", out)
+                else:
+                    self.assertIn("U0 MainImage(CHtUniforms *u,F64 frag_x,"
+                                  "F64 frag_y,CHtFragColor *out_color)", out)
 
     def test_gradient_expressions(self):
         out = transpile(self.fixture("gradient.glsl"), runner="none")
         # fragCoord.y / iResolution.y with Shadertoy bottom-left origin
-        self.assertIn("=u->res_y-y-0.5;", out)
+        self.assertIn("=frag_y;", out)
         self.assertIn("/ht_iRes_y)", out)
-        # luminance quantization to the 16-entry palette
-        self.assertIn("ht_lum=Clamp(0.299*", out)
-        self.assertIn("*out_color=ClampI64(ToI64(ht_lum*16.0),0,15);", out)
+        # RGBA passes through unclamped; the app renderer owns quantization.
+        self.assertIn("out_color->r=", out)
+        self.assertNotIn("ht_lum", out)
+        self.assertNotIn("ClampI64", out)
+        self.assertIn("ht_iMouse_y=u->res_y-u->mouse_y;", out)
+        self.assertIn("if (u->click_x<0)", out)
 
     def test_circle_length_and_step(self):
         out = transpile(self.fixture("circle.glsl"), runner="none")
@@ -280,13 +287,13 @@ class TestEmitter(unittest.TestCase):
         self.assertIn("ht_iRes_z=1.0;", out)
 
     def test_reserved_name_collision_renamed(self):
-        # 'pi' is a TempleOS #define; 'x'/'u' collide with MainImage params
-        out = t("float pi = 3.0; float x = pi * 2.0; float u = x;"
+        # 'pi' is a TempleOS #define; 'frag_x'/'u' collide with ABI params
+        out = t("float pi = 3.0; float frag_x = pi * 2.0; float u = frag_x;"
                 "fragColor = vec4(u);")
         self.assertIn("pi_2", out)
         self.assertNotIn("F64 pi;", out)
         self.assertNotIn("F64 pi,", out)
-        self.assertIn("x_2", out)
+        self.assertIn("frag_x_2", out)
         self.assertIn("u_2", out)
 
     def test_while_loop_emitted(self):

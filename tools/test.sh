@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# holytoy proof suite. Nine round-trips through the real VM:
+# holytoy proof suite. Ten round-trips through the real VM:
 #   1. smoke        guest marker round-trip
 #   2. gradient     screenshot dimensions and colors
 #   3. error        guest compiler failure surfaces as exit 1
@@ -9,6 +9,7 @@
 #   7. glsl-static  transpiled GLSL runs standalone (--runner static)
 #   8. glsl-app     .glsl source animates inside the app (--runner none)
 #   9. mouse        QMP mouse injection lands on a pixel and clicks
+#  10. dither       static GLSL gradient is deterministic and spatially dithered
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -166,6 +167,7 @@ if RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC; then
     if grep -q "HT SWAP OK" "$RD/guest.log" &&
        grep -q "HT ERRSURVIVE OK" "$RD/guest.log" &&
        grep -q "HT MATH OK" "$RD/guest.log" &&
+       grep -q "HT DITHER OK" "$RD/guest.log" &&
        grep -qE "HolyToy +[0-9]+ms" "$RD/screen.txt" &&
        [ "$DISTINCT" -ge 3 ]; then
         ok "holytoy: recompile + math markers, ms readout, $DISTINCT distinct frames"
@@ -256,6 +258,47 @@ else
     else
         bad "mouse: MOUSE FINAL '${MX:-?} ${MY:-?} ${MLB:-?}' out of tolerance (run $RD)"
     fi
+fi
+
+# 10. dither: a static app shader is deterministic and varies across space
+RD="$(new_run_path dither)"
+if RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl; then
+    frame_files=("$RD"/frames/frame-*.png)
+    HASH1=""
+    HASH2=""
+    if [ "${#frame_files[@]}" -ge 2 ] && [ -e "${frame_files[0]}" ]; then
+        LAST1="${frame_files[${#frame_files[@]}-2]}"
+        LAST2="${frame_files[${#frame_files[@]}-1]}"
+        # Screen rows 0-7 are TempleOS's live system status bar; the app
+        # viewport starts at row 8, so exclude the bar from stable hashes.
+        HASH1="$(python3 tools/imginfo.py "$LAST1" --crop 0,8,640x288 --hash |
+            awk '{print $4}')"
+        HASH2="$(python3 tools/imginfo.py "$LAST2" --crop 0,8,640x288 --hash |
+            awk '{print $4}')"
+    fi
+    INFO="$(python3 tools/imginfo.py "$RD/latest.png" --crop 0,8,640x288 \
+        2>/dev/null || echo "0 0 0")"
+    read -r W H NCOLORS <<<"$INFO"
+    BAND_ALIVE=0
+    for ROW in 56 152 248; do
+        BAND_COLORS="$(python3 tools/imginfo.py "$RD/latest.png" \
+            --crop "0,$ROW,640x8" 2>/dev/null | awk '{print $3}')"
+        if [ "${BAND_COLORS:-0}" -ge 2 ]; then
+            BAND_ALIVE=$((BAND_ALIVE + 1))
+        fi
+    done
+    if grep -q "HT GLSL OK" "$RD/guest.log" &&
+       [ -n "$HASH1" ] && [ "$HASH1" = "$HASH2" ] &&
+       [ "$BAND_ALIVE" -ge 2 ] &&
+       [ "$W" = 640 ] && [ "$H" = 288 ] &&
+       [ "$NCOLORS" -ge 4 ] && [ "$NCOLORS" -le 16 ]; then
+        ok "dither: deterministic viewport $HASH1, $NCOLORS colors, spatial variation"
+    else
+        bad "dither: GLSL/hash/band/gamut check failed (hash '$HASH1'/'$HASH2', colors $NCOLORS, band $BAND_ALIVE; run $RD)"
+    fi
+else
+    RC=$?
+    bad "dither: run.sh exited $RC (run $RD)"
 fi
 
 echo "-- $PASS passed, $FAIL failed --"

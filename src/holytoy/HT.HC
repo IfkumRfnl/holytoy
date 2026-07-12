@@ -8,6 +8,7 @@
 //Harness-mode: install draw_it and return; guest/RUN.HC brackets us.
 
 #include "E:/HTMATH.HC"	//LUT sin/cos (16.16 turns); mkxfer.sh ships it always
+#include "E:/HTRENDER.HC"	//RGBA palette quantizer; mkxfer.sh ships it always
 
 #define HT_VIEW_H	288	//viewport: full width x 288 window pixels (~60%)
 #define HT_SCALE	4	//shade once per 4x4 block (VISION.md render scale)
@@ -16,61 +17,82 @@
 #define HT_STATUS_ROW	58	//status/error line (last window row)
 #define HT_SRC_MAX	8192	//transpiled GLSL starts ~2 KB; static global, cheap
 
-class CHtUniforms { F64 i_time; I64 i_frame; I64 res_x,res_y; I64 mouse_x,mouse_y; };
+class CHtFragColor { F64 r,g,b,a; };
+class CHtUniforms
+{
+  F64 i_time;
+  I64 i_frame;
+  I64 res_x,res_y;
+  I64 mouse_x,mouse_y;	//current viewport px, Y-down (raw)
+  I64 mouse_lb;		//1 while left button is held
+  I64 click_x,click_y;	//last press, viewport px, Y-down; -1 = never
+};
 
 CHtUniforms ht_u;
-U0 (*ht_fp)(CHtUniforms *u,I64 x,I64 y,U8 *out_color);
+U0 (*ht_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
 U8 ht_src[HT_SRC_MAX];		//current shader source (the code pane content)
 U8 ht_status[96];		//status/error line text
 Bool ht_status_err;		//status line draws LTRED when TRUE
 Bool ht_cursor;			//GUI edit mode: draw an end-of-buffer cursor
 F64 ht_t0;			//shading-loop timing start (per frame)
 I64 ht_shade_ms;		//last frame's shading time, whole ms
+Bool ht_mouse_lb_prev;		//rising-edge state for iMouse click position
 
 U8 *ht_src1=
-"U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)\n"
+"U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n"
 "{//sample 1: plasma bands\n"
-"  F64 fx=x,fy=y,t=u->i_time,v;\n"
-"  v=Sin(fx*0.021+t)+\n"
-"    Sin(fy*0.032-t*0.7)+\n"
-"    Sin((fx+fy)*0.014+t*0.5)+\n"
-"    Sin(Sqrt(fx*fx+fy*fy)*0.019-t*1.3);\n"
-"  *out_color=ToI64(v*2.0+8.0)&15;\n"
+"  F64 t=u->i_time,v;\n"
+"  v=Sin(frag_x*0.021+t)+\n"
+"    Sin(frag_y*0.032-t*0.7)+\n"
+"    Sin((frag_x+frag_y)*0.014+t*0.5)+\n"
+"    Sin(Sqrt(frag_x*frag_x+frag_y*frag_y)*0.019-t*1.3);\n"
+"  out_color->r=0.5+v*0.125;\n"
+"  out_color->g=0.5-v*0.125;\n"
+"  out_color->b=0.75+v*0.0625;\n"
+"  out_color->a=1.0;\n"
 "}\n";
 
 U8 *ht_src2=
-"U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)\n"
+"U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n"
 "{//sample 2: expanding bright rings\n"
-"  F64 dx=x-u->res_x/2.0,dy=y-u->res_y/2.0,t=u->i_time;\n"
-"  *out_color=(ToI64(Sqrt(dx*dx+dy*dy)*0.11-t*9.0)&7)+8;\n"
+"  F64 dx=frag_x-u->res_x/2.0,dy=frag_y-u->res_y/2.0,t=u->i_time,v;\n"
+"  v=0.5+0.5*Sin(Sqrt(dx*dx+dy*dy)*0.11-t*9.0);\n"
+"  out_color->r=v; out_color->g=v*0.65; out_color->b=1.0-v*0.5;\n"
+"  out_color->a=1.0;\n"
 "}\n";
 
 U8 *ht_src3=
-"U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)\n"
+"U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n"
 "{//sample 3: fixed-point plasma (HTMATH 16.16-turn LUT sines)\n"
 "  I64 t16=ToI64(u->i_time*0x3000),v;\n"
-"  F64 fx=x,fy=y;\n"
-"  v=HTMSin16(x*449+t16)+\n"
-"    HTMSin16(y*323-t16*7/10)+\n"
-"    HTMSin16((x+y)*219+t16/2)+\n"
+"  F64 fx=frag_x,fy=frag_y;\n"
+"  v=HTMSin16(ToI64(frag_x*449.0)+t16)+\n"
+"    HTMSin16(ToI64(frag_y*323.0)-t16*7/10)+\n"
+"    HTMSin16(ToI64((frag_x+frag_y)*219.0)+t16/2)+\n"
 "    HTMSin16(ToI64(Sqrt(fx*fx+fy*fy)*250.0)-t16*13/10);\n"
-"  *out_color=(v>>14)&15;\n"
+"  out_color->r=(v+0x40000)/524288.0;\n"
+"  out_color->g=1.0-out_color->r;\n"
+"  out_color->b=0.5+v/1048576.0;\n"
+"  out_color->a=1.0;\n"
 "}\n";
 
 U8 *ht_bad=
-"U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)\n"
+"U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n"
 "{//deliberately broken: missing expression\n"
-"  *out_color=;\n"
+"  out_color->r=;\n"
 "}\n";
 
-U0 MainImage(CHtUniforms *u,I64 x,I64 y,U8 *out_color)
+U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)
 {//Built-in sample shader v1: plasma bands (same text as ht_src1).
-  F64 fx=x,fy=y,t=u->i_time,v;
-  v=Sin(fx*0.021+t)+
-    Sin(fy*0.032-t*0.7)+
-    Sin((fx+fy)*0.014+t*0.5)+
-    Sin(Sqrt(fx*fx+fy*fy)*0.019-t*1.3);
-  *out_color=ToI64(v*2.0+8.0)&15;
+  F64 t=u->i_time,v;
+  v=Sin(frag_x*0.021+t)+
+    Sin(frag_y*0.032-t*0.7)+
+    Sin((frag_x+frag_y)*0.014+t*0.5)+
+    Sin(Sqrt(frag_x*frag_x+frag_y*frag_y)*0.019-t*1.3);
+  out_color->r=0.5+v*0.125;
+  out_color->g=0.5-v*0.125;
+  out_color->b=0.75+v*0.0625;
+  out_color->a=1.0;
 }
 
 U0 HtStatus(Bool err,U8 *fmt,...)
@@ -120,7 +142,7 @@ U0 HtDrawPane(CTask *task,CDC *dc)
   GrPrint(dc,0,HT_STATUS_ROW*8," %s",ht_status);
 }
 
-U0 (*ht_new_fp)(CHtUniforms *u,I64 x,I64 y,U8 *out_color);
+U0 (*ht_new_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
 
 Bool HtRecompile(U8 *src)
 {//Compile shader source in-task (ExePutS2, Compiler/CMain.HC:631 throws
@@ -164,10 +186,12 @@ Bool HtRecompile(U8 *src)
 
 U0 HtDrawIt(CTask *task,CDC *dc)
 {//dc aliases gr.dc2; raw body pokes are ABSOLUTE screen coords.
-  I64 bx,by,i,j,sx0,sy,stride=dc->width_internal;
+  I64 bx,by,i,j,sx0,sy,stride=dc->width_internal,r88,g88,b88;
+  I64 rr,gg,bb,o,r5,g5,b5;
   I64 vw=task->pix_width,vh=HT_VIEW_H;
   I64 nbx=vw/HT_SCALE,nby=vh/HT_SCALE;
-  U8 c,*p;
+  U8 *p,q[16];
+  CHtFragColor fc;
   if (vh>task->pix_height)
     vh=task->pix_height;
   ht_u.i_time=tS;
@@ -176,22 +200,53 @@ U0 HtDrawIt(CTask *task,CDC *dc)
   ht_u.res_y=vh;
   ht_u.mouse_x=ms.pos.x-task->pix_left;
   ht_u.mouse_y=ms.pos.y-task->pix_top;
+  ht_u.mouse_lb=ms.lb;
+  if (ht_u.mouse_lb && !ht_mouse_lb_prev) {
+    ht_u.click_x=ht_u.mouse_x;
+    ht_u.click_y=ht_u.mouse_y;
+  }
+  ht_mouse_lb_prev=ht_u.mouse_lb;
   ht_t0=tS;			//time the shading work only, not the winmgr
 				//frame cadence (docs/notes/perf-floor.md)
   if (ht_fp) {
     for (by=0;by<nby;by++) {
       for (bx=0;bx<nbx;bx++) {
-        c=0;
-        ht_fp(&ht_u,bx*HT_SCALE,by*HT_SCALE,&c);
-        c&=15;
+        fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
+        //At HT_SCALE=1 this is the exact Shadertoy pixel center (Y-up).
+        ht_fp(&ht_u,bx*HT_SCALE+HT_SCALE*0.5,
+              vh-(by*HT_SCALE+HT_SCALE*0.5),&fc);
+        r88=ToI64(fc.r*256.0);
+        g88=ToI64(fc.g*256.0);
+        b88=ToI64(fc.b*256.0);
+        if (r88<0) r88=0; else if (r88>256) r88=256;
+        if (g88<0) g88=0; else if (g88>256) g88=256;
+        if (b88<0) b88=0; else if (b88>256) b88=256;
+        rr=r88*31;
+        gg=g88*31;
+        bb=b88*31;
         sx0=task->pix_left+bx*HT_SCALE;
         if (0<=sx0<=dc->width-HT_SCALE) {
+          //Inline path must match HtQuantize semantics exactly. HT_SCALE=4
+          //aligns with the Bayer tile, so compute its 16 indices once/block.
+          for (i=0;i<HT_SCALE;i++) {
+            sy=task->pix_top+by*HT_SCALE+i;
+            for (j=0;j<HT_SCALE;j++) {
+              o=htr_bofs[((sy&3)*4)+((sx0+j)&3)]*31;
+              r5=(rr+o)>>8;
+              g5=(gg+o)>>8;
+              b5=(bb+o)>>8;
+              if (r5<0) r5=0; else if (r5>31) r5=31;
+              if (g5<0) g5=0; else if (g5>31) g5=31;
+              if (b5<0) b5=0; else if (b5>31) b5=31;
+              q[i*HT_SCALE+j]=htr_lut[(r5<<10)+(g5<<5)+b5];
+            }
+          }
           for (i=0;i<HT_SCALE;i++) {
             sy=task->pix_top+by*HT_SCALE+i;
             if (0<=sy<dc->height) {
               p=&dc->body[sy*stride+sx0];
               for (j=0;j<HT_SCALE;j++)
-                p[j]=c;
+                p[j]=q[i*HT_SCALE+j];
             }
           }
         }
@@ -226,8 +281,9 @@ U0 HtSelfTest()
 {//Headless proof driven by guest/RUN.HC; markers land in guest.log via
  //the task-doc dump.  Leaves the failed-compile state on screen at the
  //end so the final screenshot shows the error line over a live viewport.
-  U0 (*before)(CHtUniforms *u,I64 x,I64 y,U8 *out_color);
-  I64 f1,f2;
+  U0 (*before)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
+  I64 f1,f2,dx,dy,n=0,first=-1;
+  Bool mono=TRUE,vary=FALSE;
   Sleep(2000);			//~2s of shader v1 for the rolling frame dump
   before=ht_fp;
   if (HtRecompile(ht_src2) && ht_fp!=before && ht_fp==ht_new_fp)
@@ -258,6 +314,21 @@ U0 HtSelfTest()
     "HT MATH OK\n";		//exact LUT entries + F3 sample compiles
   else
     "HT MATH FAIL\n";
+  for (dy=0;dy<4;dy++)
+    for (dx=0;dx<4;dx++) {
+      if (HtQuantize(0,0,0,dx,dy)!=BLACK ||
+          HtQuantize(256,256,256,dx,dy)!=WHITE)
+        mono=FALSE;
+      n=HtQuantize(128,128,128,dx,dy);
+      if (first<0)
+        first=n;
+      else if (n!=first)
+        vary=TRUE;
+    }
+  if (mono && vary)
+    "HT DITHER OK\n";
+  else
+    "HT DITHER FAIL\n";
   HtRecompile(ht_bad);		//park in the survived-error demo state
 }
 
@@ -312,6 +383,9 @@ StrCpy(ht_src,ht_src1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
 HTMInit;			//build the LUT once, before any F3/GLSL shading
+HTRInit;			//build the palette LUT and Bayer offsets once
+ht_u.click_x=-1;
+ht_u.click_y=-1;
 Fs->draw_it=&HtDrawIt;
 Bool ht_had_shader=HtLoadShader();
 if (ht_gui)

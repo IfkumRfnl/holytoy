@@ -90,7 +90,7 @@ make run SRC=src/gradient.HC     # one cycle (~20 s): inject, boot, screenshot, 
 make run SRC=tests/glsl/foo.glsl # .glsl: transpiled host-side, runs inside the HolyToy app
 make watch SRC=...               # re-run on every save
 make gui [SRC=...]               # visible QEMU window (WSLg); guest stays up, no auto-reboot
-make test                        # the nine proofs (must stay green)
+make test                        # the ten proofs (must stay green)
 make fetch-iso                   # (re)download images/TempleOS.ISO
 make clean                       # remove run artifacts; never touches the golden image
 ```
@@ -167,7 +167,16 @@ transpile failure exits 1 before any VM boots, diagnostic on stderr.
 mkxfer.sh ships `HOLYTOY_SHADER` (any `--runner none` .HC works) as
 `E:/SHADER.HC`; the app compiles it at startup and prints `HT GLSL OK`
 or `HT GLSL FAIL` to guest.log. mkxfer.sh also always ships
-`src/holytoy/HTMATH.HC` as `E:/HTMATH.HC` — HT.HC `#include`s it.
+`src/holytoy/HTMATH.HC` as `E:/HTMATH.HC` and
+`src/holytoy/HTRENDER.HC` as `E:/HTRENDER.HC`; HT.HC `#include`s both.
+The app shader ABI returns unclamped RGBA through `CHtFragColor`. The
+renderer owns clamping, bottom-left pixel-center coordinates, palette
+quantization, and deterministic 4x4 Bayer dithering.
+
+The ABI carries mouse positions in raw viewport pixels with Y down. Emitted
+GLSL maps these to Shadertoy `iMouse`: xy is the current Y-up position; zw is
+the latched click position while held, its negation after release, or zero
+before the first click.
 
 Driving a live VM: `python3 tools/qmp.py RUN_DIR/qmp.sock VERB ...` —
 keyboard (`keys`/`type`/`typefile`), `screendump`, and mouse injection:
