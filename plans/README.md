@@ -22,6 +22,7 @@ deliberately left unplanned, folding in the deferred mouse-injection finding.
 | 003  | Perf-floor spike: F64 vs LUT fixed-point, pick format (step 2) | P2 | M | — | DONE (LUT 2.5x at 640x480, 6.8x unmasked; 16.16 vs 10.22 a tie -> 16.16 default; numbers in docs/notes/perf-floor.md) |
 | 004  | GLSL→HolyC transpiler prototype `tools/glsl2hc.py` (step 3) | P2 | L | 005 | DONE (50 unit tests; gradient/circle/plasma e2e exit 0, gradient 16 colors; coverage in docs/notes/glsl2hc.md) |
 | 006  | GLSL into the app host-side: HTMATH+readout, SHADER.HC injection, testable iMouse (step 3 first half) | P1 | L | 002, 003, 004 | DONE (merged to main at `345aef8` 2026-07-12; 9/9 proofs green x4 runs incl. post-merge; mouse landed 400,300 exact) |
+| 007  | RGBA shader ABI, renderer-owned quantization (HTRENDER.HC), Bayer dithering | P1 | M/L | 006 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
@@ -47,16 +48,23 @@ REJECTED (with one-line rationale)
   redefinition through `ExePutS2` and runtime `#include` off `E:` — so 006
   injects transpiled output verbatim, with **zero changes to
   `tools/glsl2hc.py`**.
-- The in-guest transpiler port (VISION step 3 second half) becomes plan 007
-  after 006 lands — 006's `HtLoadShader`/`HtRecompile` path and the port
-  surface in docs/notes/glsl2hc.md are its foundation. Also queued for 007:
-  iMouse button state (needs the frozen `CHtUniforms` ABI to grow) and the
-  fixed-point `Sqrt` LUT (perf-floor Decision 4).
-- Maintainer direction 2026-07-12 (recorded in the docs/VISION.md §1
-  amendment) reshapes 007+: the input box is GLSL-ONLY (the HolyC dialect
-  is scaffolding), the compatibility target is most Shadertoy fragment
-  shaders (no textures), and color quantization moves to Bayer ordered
-  dithering — not yet implemented anywhere in the repo as of `e91b74a`.
+- Maintainer direction 2026-07-12 (AGENTS.md "Product direction
+  (authoritative)" + docs/VISION.md §1 amendment) reshaped 007+: the input
+  box is GLSL-ONLY, the compatibility target is ~99% of non-texture
+  fragment-only Shadertoy shaders measured against a corpus, the product
+  compiler is written in HolyC and runs in-guest (NOT a port of
+  `tools/glsl2hc.py`, which is expected to see little further use), and
+  color quantization moves to Bayer ordered dithering.
+- 007 breaks the `CHtUniforms`/shader ABI exactly once before any compiler
+  work: shaders return RGBA (`CHtFragColor`), the renderer (`HTRENDER.HC`)
+  owns palette mapping + Bayer dithering, and the deferred iMouse button
+  state rides along. The ABI re-freezes when 007 lands — it is the surface
+  the guest compiler emits against.
+- The in-guest GLSL compiler becomes plans 008+ (skeleton/arena/diagnostics
+  + gradient vertical slice + GLSL-only editor, then structs/arrays/
+  constructors/overloads + corpus and an honest compatibility %, then
+  builtins/matrices/preprocessor breadth). Still queued for a later plan:
+  the fixed-point `Sqrt` LUT (perf-floor Decision 4).
 
 ## Findings considered and deferred/rejected
 
