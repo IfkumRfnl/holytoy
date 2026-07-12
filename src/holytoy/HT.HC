@@ -9,6 +9,11 @@
 
 #include "E:/HTMATH.HC"	//LUT sin/cos (16.16 turns); mkxfer.sh ships it always
 #include "E:/HTRENDER.HC"	//RGBA palette quantizer; mkxfer.sh ships it always
+#include "E:/HTLEX.HC"	//in-guest GLSL compiler modules (plan 008)
+#include "E:/HTPARSE.HC"
+#include "E:/HTLOWER.HC"
+#include "E:/HTEMIT.HC"
+#include "E:/HTCOMP.HC"
 
 #define HT_VIEW_H	288	//viewport: full width x 288 window pixels (~60%)
 #define HT_SCALE	4	//shade once per 4x4 block (VISION.md render scale)
@@ -277,6 +282,25 @@ Bool HtLoadShader()
   return TRUE;
 }
 
+Bool HtLoadGlsl()
+{//Product path: read GLSL, compile to internal HolyC in this guest task,
+ //then use the existing failure-safe JIT swap and RGBA renderer pipeline.
+  U8 *buf; I64 sz; CHtCompileResult result;
+  if (!FileFind("E:/SHADER.GLS")) return FALSE;
+  buf=FileRead("E:/SHADER.GLS",&sz);
+  if (!buf) { "HT GUEST GLSL FAIL read\n"; return FALSE; }
+  if (HtCompileGlsl(buf,&result) && HtRecompile(result.holy))
+    "HT GUEST GLSL OK\n";
+  else {
+    HtStatus(TRUE,"GLSL ERR %s",result.error);
+    "HT GUEST GLSL FAIL %s\n",result.error;
+    Free(buf);
+    return FALSE;
+  }
+  Free(buf);
+  return TRUE;
+}
+
 U0 HtSelfTest()
 {//Headless proof driven by guest/RUN.HC; markers land in guest.log via
  //the task-doc dump.  Leaves the failed-compile state on screen at the
@@ -387,7 +411,9 @@ HTRInit;			//build the palette LUT and Bayer offsets once
 ht_u.click_x=-1;
 ht_u.click_y=-1;
 Fs->draw_it=&HtDrawIt;
-Bool ht_had_shader=HtLoadShader();
+Bool ht_had_shader=HtLoadGlsl();
+if (!ht_had_shader)
+  ht_had_shader=HtLoadShader();	//temporary host-generated compatibility path
 if (ht_gui)
   HtInteract;			//shader (if any) already live in the viewport
 else if (ht_had_shader)

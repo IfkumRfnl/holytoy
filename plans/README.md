@@ -23,6 +23,7 @@ deliberately left unplanned, folding in the deferred mouse-injection finding.
 | 004  | GLSL→HolyC transpiler prototype `tools/glsl2hc.py` (step 3) | P2 | L | 005 | DONE (50 unit tests; gradient/circle/plasma e2e exit 0, gradient 16 colors; coverage in docs/notes/glsl2hc.md) |
 | 006  | GLSL into the app host-side: HTMATH+readout, SHADER.HC injection, testable iMouse (step 3 first half) | P1 | L | 002, 003, 004 | DONE (merged to main at `345aef8` 2026-07-12; 9/9 proofs green x4 runs incl. post-merge; mouse landed 400,300 exact) |
 | 007  | RGBA shader ABI, renderer-owned quantization (HTRENDER.HC), Bayer dithering | P1 | M/L | 006 | DONE (merged to main at `300a342` 2026-07-12; 10/10 proofs x2 pre-merge + x1 post-merge; readout 20ms vs 7ms baseline, budget amended to 3x in-plan) |
+| 008  | In-guest GLSL compiler skeleton, vertical slice, corpus measurement | P1 | L | 007 | DONE (host checks green in Codex runner; all 11 VM proofs incl. new guest-glsl verified on maintainer host 2026-07-12; corpus baseline 1/3 = 33.33%) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)

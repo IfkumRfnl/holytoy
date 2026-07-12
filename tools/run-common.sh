@@ -86,15 +86,14 @@ holy_allocate_run_dir() {
     flock -u 6 || return 2
 }
 
-# If SRC is a .glsl file, transpile it into RUN_DIR and retarget the run at
-# the HolyToy app with the result as its shader. Requires RUN_DIR allocated.
-# On transpile failure prints the diagnostic and returns 1 (user source
-# error, mirroring guest compile errors).
+# Ship GLSL unchanged for the product compiler. Also retain the transitional
+# host artifact so out-of-slice fixtures keep working while compatibility grows.
 holy_prepare_glsl() {
     case "$SRC" in
         *.glsl) ;;
         *) return 0 ;;
     esac
+    export HOLYTOY_GLSL="$(realpath "$SRC")"
     if ! python3 "$ROOT/tools/glsl2hc.py" "$SRC" --runner none \
             -o "$RUN_DIR/shader.HC"; then
         echo "run: GLSL transpile failed for $SRC" >&2

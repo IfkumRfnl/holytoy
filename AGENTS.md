@@ -159,19 +159,23 @@ Boot detail: the TempleOS MBR loader blocks on a drive menu each boot;
 run.sh/gui.sh/install_os.sh answer it with blind `1` keypresses (the BIOS
 keyboard buffer holds early presses, duplicates are harmless).
 
-GLSL sources: when SRC ends in `.glsl`, run.sh/gui.sh transpile it with
-`tools/glsl2hc.py --runner none` to `RUN_DIR/shader.HC` (retained as a
-debugging artifact), export `HOLYTOY_SHADER`, and retarget the run at
-`src/holytoy/HT.HC` (`holy_prepare_glsl`, tools/run-common.sh). A
-transpile failure exits 1 before any VM boots, diagnostic on stderr.
-mkxfer.sh ships `HOLYTOY_SHADER` (any `--runner none` .HC works) as
-`E:/SHADER.HC`; the app compiles it at startup and prints `HT GLSL OK`
-or `HT GLSL FAIL` to guest.log. mkxfer.sh also always ships
-`src/holytoy/HTMATH.HC` as `E:/HTMATH.HC` and
-`src/holytoy/HTRENDER.HC` as `E:/HTRENDER.HC`; HT.HC `#include`s both.
+GLSL sources: when SRC ends in `.glsl`, run.sh/gui.sh ship the original as
+`E:/SHADER.GLS` and retarget the run at `src/holytoy/HT.HC`
+(`holy_prepare_glsl`, tools/run-common.sh). HolyToy's guest lexer, parser,
+lowering pass, and emitter compile the supported slice to internal HolyC and
+print `HT GUEST GLSL OK`. During the compatibility ramp the host prototype
+also produces `RUN_DIR/shader.HC` as a fallback for unsupported fixtures;
+that fallback is development scaffolding, not product completion. mkxfer.sh
+ships both requested shader artifacts and always ships the five compiler
+modules plus `HTMATH.HC` and `HTRENDER.HC`; HT.HC includes the modules.
 The app shader ABI returns unclamped RGBA through `CHtFragColor`. The
 renderer owns clamping, bottom-left pixel-center coordinates, palette
 quantization, and deterministic 4x4 Bayer dithering.
+
+Run `python3 tools/corpus_compat.py` for the current versioned-fixture
+compatibility baseline and unsupported-feature breakdown. This small repo
+fixture set is a smoke corpus, not the large public corpus required for the
+~99% product target.
 
 The ABI carries mouse positions in raw viewport pixels with Y down. Emitted
 GLSL maps these to Shadertoy `iMouse`: xy is the current Y-up position; zw is

@@ -10,6 +10,7 @@
 #   8. glsl-app     .glsl source animates inside the app (--runner none)
 #   9. mouse        QMP mouse injection lands on a pixel and clicks
 #  10. dither       static GLSL gradient is deterministic and spatially dithered
+#  11. guest-glsl   raw GLSL is compiled in-guest and rendered through HTRENDER
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -19,6 +20,10 @@ tools/test-run-locks.sh || exit 2
 
 python3 tools/test_glsl2hc.py >/dev/null 2>&1 || {
     echo "test.sh: glsl2hc unit tests failed - run python3 tools/test_glsl2hc.py" >&2
+    exit 2
+}
+python3 tools/test_corpus_compat.py >/dev/null 2>&1 || {
+    echo "test.sh: corpus compatibility tests failed - run python3 tools/test_corpus_compat.py" >&2
     exit 2
 }
 
@@ -287,7 +292,7 @@ if RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl; then
             BAND_ALIVE=$((BAND_ALIVE + 1))
         fi
     done
-    if grep -q "HT GLSL OK" "$RD/guest.log" &&
+    if grep -q "HT GUEST GLSL OK" "$RD/guest.log" &&
        [ -n "$HASH1" ] && [ "$HASH1" = "$HASH2" ] &&
        [ "$BAND_ALIVE" -ge 2 ] &&
        [ "$W" = 640 ] && [ "$H" = 288 ] &&
@@ -299,6 +304,24 @@ if RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl; then
 else
     RC=$?
     bad "dither: run.sh exited $RC (run $RD)"
+fi
+
+# 11. guest-glsl: the raw source, not SHADER.HC, succeeds in the new compiler.
+RD="$(new_run_path guest-glsl)"
+if RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl; then
+    INFO="$(python3 tools/imginfo.py "$RD/latest.png" --crop 0,8,640x288 \
+        2>/dev/null || echo "0 0 0")"
+    read -r W H NCOLORS <<<"$INFO"
+    if grep -q "HT GUEST GLSL OK" "$RD/guest.log" &&
+       ! grep -q "HT GLSL OK" "$RD/guest.log" &&
+       [ "$W" = 640 ] && [ "$H" = 288 ] && [ "$NCOLORS" -ge 4 ]; then
+        ok "guest-glsl: raw GLSL compiled in guest and rendered ($NCOLORS colors)"
+    else
+        bad "guest-glsl: missing guest marker or invalid viewport (run $RD)"
+    fi
+else
+    RC=$?
+    bad "guest-glsl: run.sh exited $RC (run $RD)"
 fi
 
 echo "-- $PASS passed, $FAIL failed --"
