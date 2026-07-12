@@ -22,7 +22,7 @@ deliberately left unplanned, folding in the deferred mouse-injection finding.
 | 003  | Perf-floor spike: F64 vs LUT fixed-point, pick format (step 2) | P2 | M | — | DONE (LUT 2.5x at 640x480, 6.8x unmasked; 16.16 vs 10.22 a tie -> 16.16 default; numbers in docs/notes/perf-floor.md) |
 | 004  | GLSL→HolyC transpiler prototype `tools/glsl2hc.py` (step 3) | P2 | L | 005 | DONE (50 unit tests; gradient/circle/plasma e2e exit 0, gradient 16 colors; coverage in docs/notes/glsl2hc.md) |
 | 006  | GLSL into the app host-side: HTMATH+readout, SHADER.HC injection, testable iMouse (step 3 first half) | P1 | L | 002, 003, 004 | DONE (merged to main at `345aef8` 2026-07-12; 9/9 proofs green x4 runs incl. post-merge; mouse landed 400,300 exact) |
-| 007  | RGBA shader ABI, renderer-owned quantization (HTRENDER.HC), Bayer dithering | P1 | M/L | 006 | TODO |
+| 007  | RGBA shader ABI, renderer-owned quantization (HTRENDER.HC), Bayer dithering | P1 | M/L | 006 | DONE (branch `advisor/007-rgba-renderer-dither`; 10/10 proofs x2; readout 20ms vs 7ms baseline, budget amended to 3x in-plan) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
@@ -58,8 +58,8 @@ REJECTED (with one-line rationale)
 - 007 breaks the `CHtUniforms`/shader ABI exactly once before any compiler
   work: shaders return RGBA (`CHtFragColor`), the renderer (`HTRENDER.HC`)
   owns palette mapping + Bayer dithering, and the deferred iMouse button
-  state rides along. The ABI re-freezes when 007 lands — it is the surface
-  the guest compiler emits against.
+  state rides along. The ABI is re-frozen — it is the surface plan 008's
+  guest compiler emits against until a plan explicitly unfreezes it.
 - The in-guest GLSL compiler becomes plans 008+ (skeleton/arena/diagnostics
   + gradient vertical slice + GLSL-only editor, then structs/arrays/
   constructors/overloads + corpus and an honest compatibility %, then

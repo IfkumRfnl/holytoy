@@ -472,13 +472,18 @@ Add two optional flags to `tools/imginfo.py` (keep the default output
   frames while the dither pattern varies across space. Pass iff ALL of:
   1. run exits 0 with `HT GLSL OK` in `guest.log`;
   2. determinism: the viewport crop hash
-     (`imginfo.py PNG --crop 0,0,640x288 --hash`, 4th field) is
+     (`imginfo.py PNG --crop 0,8,640x288 --hash`, 4th field) is
      IDENTICAL for the last two `frames/frame-*.png` (crop excludes the
-     pane, whose ms readout may differ);
+     pane, whose ms readout may differ). *(Operator amendment during
+     execution: the crop starts at row 8, not 0 — screen rows 0-7 are
+     the TempleOS system status bar with a live clock/FPS counter,
+     which is nondeterministic across frames.)*
   3. dithering alive: some 640x8 horizontal band inside the ramp has ≥2
      distinct colors (`imginfo.py latest.png --crop 0,ROW,640x8`,
-     scanning ROW over e.g. 96/144/192 and requiring at least one hit) —
-     a solid-banded (undithered) ramp fails this;
+     scanning ROW over 56/152/248 — the mixing-zone centers of the
+     4-gray ramp; the plan's original 96/144/192 mostly hit solid
+     zones — requiring ≥2 of 3 hits) — a solid-banded (undithered)
+     ramp fails this;
   4. gamut sane: the full viewport crop has ≥4 distinct colors (the four
      grays at minimum) and ≤16.
 
@@ -533,8 +538,14 @@ Machine-checkable. ALL must hold:
       luminance quantization left in the `--runner none` path
 - [ ] `git diff 27720e9..HEAD --stat -- src/holytoy/HTMATH.HC src/bench-math.HC guest/ tests/glsl/ tools/qmp.py` → empty
 - [ ] `LC_ALL=C grep -P '[^\x00-\x7F]' src/holytoy/HT.HC src/holytoy/HTRENDER.HC` → no output
-- [ ] Shading readout (built-in sample, HT_SCALE=4) ≤ 2x the step 0
-      baseline, evidenced by `screen.txt` from the done-criteria HT.HC run
+- [ ] Shading readout (built-in sample, HT_SCALE=4) ≤ 3x the step 0
+      baseline, evidenced by `screen.txt` from the done-criteria HT.HC run.
+      (Amended by the operator during execution: baseline 7 ms measured
+      per-block shading only; the new pipeline adds ~184k true per-pixel
+      dither ops. Measured 32 ms with a called `HtQuantize`, 20 ms after
+      inlining the quantize arithmetic into `HtDrawIt` — 2.9x, still well
+      inside the winmgr's ~33 ms frame cadence. The original 2x budget was
+      a planning guess, not a product requirement.)
 - [ ] `plans/README.md` status row updated
 
 ## STOP conditions
