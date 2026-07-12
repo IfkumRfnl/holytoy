@@ -1,8 +1,86 @@
 # AGENTS.md — working on holytoy
 
 Operational reference for agents (and humans who want the details).
-The product spec is [docs/VISION.md](docs/VISION.md); the pitch is
-[README.md](README.md). This file is how to actually drive the machinery.
+The pitch is [README.md](README.md), and [docs/VISION.md](docs/VISION.md)
+contains the longer design narrative. The product direction below is
+authoritative when an older plan or document describes a narrower target.
+
+## Product direction (authoritative)
+
+HolyToy is a Shadertoy-compatible application that runs **inside TempleOS**.
+Its product loop is: open HolyToy, edit GLSL, compile it in the guest, and see
+the live result in the adjacent viewport. Host injection, Python, and the QEMU
+harness are development and verification tools; they are not runtime parts of
+the product.
+
+### Compatibility target
+
+The goal is approximately **99% compatibility with real Shadertoy shaders**,
+measured against a large, versioned corpus of public shaders rather than a few
+hand-written fixtures. Compatibility means that a shader compiles, runs, and
+produces materially correct output when its required inputs are available.
+Performance is measured separately: expensive shaders may render at an
+adaptive lower resolution, but lowering resolution must not change their
+language semantics.
+
+The old "small Shadertoy subset" was a feasibility-spike boundary, not an
+acceptable product boundary. In particular, the product compiler must be
+designed to support the GLSL used in practice, including:
+
+* structs and nested user-defined types;
+* arrays and indexing;
+* global and local constants, scopes, and initializers;
+* overloaded functions and GLSL constructors;
+* vectors, matrices, swizzles, and the usual implicit conversions;
+* control flow and common preprocessor usage;
+* the standard Shadertoy uniforms and builtins;
+* texture/channel sampling and buffer inputs needed by real shaders; and
+* multipass and other Shadertoy facilities wherever corpus results show they
+  are required to reach the compatibility target.
+
+Features may land incrementally, but do not simplify the final product target
+to make an implementation plan easier. Any deliberate incompatibility must be
+recorded, corpus-measured, and justified; a missing foundational GLSL feature
+such as `struct` is unfinished work, not an acceptable permanent deviation.
+
+### Compiler ownership and architecture
+
+The shipping GLSL-to-HolyC compiler is implemented in **HolyC** and executes
+inside the HolyToy process. It must not require Python or host-side
+pretranspilation. Keep the guest compiler modular: lexer, parser, typed semantic
+model/IR, lowering, and HolyC emitter should have explicit interfaces and
+separate source files. Prefer data structures and ownership rules natural to
+HolyC instead of transliterating Python objects.
+
+`tools/glsl2hc.py` is a disposable feasibility prototype and little further
+use of it is expected. It is not the product compiler, not the architecture to
+port mechanically, not the oracle the guest compiler is judged against (GLSL
+correctness is judged against rendered output and GLSL semantics, not Python
+parity), and not evidence that a GLSL feature is complete until the in-guest
+path supports that feature. Avoid expanding the Python implementation except
+where a focused change is necessary to keep the transitional host-injection
+pipeline (plans 006-007) working until the guest compiler replaces it.
+
+The temporary HolyC `MainImage` editing dialect is scaffolding only. The
+shipping editor accepts GLSL. Generated HolyC stays internal, is compiled with
+TempleOS's compiler, and on failure HolyToy reports the GLSL-facing diagnostic
+while keeping the previous shader alive.
+
+### How progress is judged
+
+Infrastructure and spikes are enabling work, not proportional product
+completion. Report these independently:
+
+1. corpus compile/run compatibility percentage and important unsupported
+   language/runtime features;
+2. in-guest compiler and editor-loop status;
+3. visual correctness and known semantic deviations;
+4. performance by render scale under TCG and KVM; and
+5. harness/test health.
+
+A host-only transpiler passing unit tests or rendering fixture shaders is a
+useful proof, but it does not count as completion of the corresponding product
+compiler feature.
 
 ## Commands
 

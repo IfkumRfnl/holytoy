@@ -8,7 +8,9 @@ starting, honor its STOP conditions, and update your row when done.
 Selection note: plans 001-004 came from the non-interactive direction audit
 and implement the v1 build order in `docs/VISION.md`. Plan 005 was added after
 a focused harness review and maintainer discussion about safe parallel agent
-sessions.
+sessions. Plan 006 was added 2026-07-12 (`plan` variant, at `e91b74a`) once
+002-004 were DONE: it is the step-3 host-side integration those plans
+deliberately left unplanned, folding in the deferred mouse-injection finding.
 
 ## Execution order & status
 
@@ -19,6 +21,7 @@ sessions.
 | 002  | HolyToy in-guest app skeleton spike (VISION step 1) | P1 | L | 001, 005 | DONE (viewport+pane+F5 recompile; self-test markers green, 6/6 proofs; notes in docs/notes/step1-skeleton.md) |
 | 003  | Perf-floor spike: F64 vs LUT fixed-point, pick format (step 2) | P2 | M | — | DONE (LUT 2.5x at 640x480, 6.8x unmasked; 16.16 vs 10.22 a tie -> 16.16 default; numbers in docs/notes/perf-floor.md) |
 | 004  | GLSL→HolyC transpiler prototype `tools/glsl2hc.py` (step 3) | P2 | L | 005 | DONE (50 unit tests; gradient/circle/plasma e2e exit 0, gradient 16 colors; coverage in docs/notes/glsl2hc.md) |
+| 006  | GLSL into the app host-side: HTMATH+readout, SHADER.HC injection, testable iMouse (step 3 first half) | P1 | L | 002, 003, 004 | DONE (merged to main at `345aef8` 2026-07-12; 9/9 proofs green x4 runs incl. post-merge; mouse landed 400,300 exact) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
@@ -37,17 +40,29 @@ REJECTED (with one-line rationale)
 - 004's emitted shaders later flow into 002's `HtRecompile` path. After its
   artifact commands are refreshed, its all-new implementation files remain
   parallel-safe with 002 and 003.
-- 004's in-guest port (transpiler embedded in the app, VISION step 3 second
-  half) is deliberately NOT planned yet — it needs 002 and 004 done first.
+- 006 consumes all three spikes: 002's `HtRecompile`/`ExePutS2` path, 003's
+  HTMATH library and readout guidance (docs/notes/perf-floor.md item 5), and
+  004's `--runner none` output. A VM probe at `e91b74a` (2026-07-12,
+  run `verify-006-Z25s4L`) confirmed HolyC tolerates class/global/function
+  redefinition through `ExePutS2` and runtime `#include` off `E:` — so 006
+  injects transpiled output verbatim, with **zero changes to
+  `tools/glsl2hc.py`**.
+- The in-guest transpiler port (VISION step 3 second half) becomes plan 007
+  after 006 lands — 006's `HtLoadShader`/`HtRecompile` path and the port
+  surface in docs/notes/glsl2hc.md are its foundation. Also queued for 007:
+  iMouse button state (needs the frozen `CHtUniforms` ABI to grow) and the
+  fixed-point `Sqrt` LUT (perf-floor Decision 4).
+- Maintainer direction 2026-07-12 (recorded in the docs/VISION.md §1
+  amendment) reshapes 007+: the input box is GLSL-ONLY (the HolyC dialect
+  is scaffolding), the compatibility target is most Shadertoy fragment
+  shaders (no textures), and color quantization moves to Bayer ordered
+  dithering — not yet implemented anywhere in the repo as of `e91b74a`.
 
 ## Findings considered and deferred/rejected
 
-- **Mouse injection in `tools/qmp.py` (for testable `iMouse`)** — real
-  finding: VISION.md:111 wants "real `iMouse`" and `tools/qmp.py:100-135`
-  is keyboard-only (no QMP `input-send-event`). Deferred, not planned:
-  nothing consumes mouse input until plan 002's app grows interaction and
-  plan 004's fixtures use `iMouse`. Fold into the step-3 integration plan
-  when 002+004 are DONE. Effort S when its time comes.
+- **Mouse injection in `tools/qmp.py` (for testable `iMouse`)** — was
+  deferred here until 002+004 were DONE; now planned as part of 006
+  (`mouse-rel`/`mouse-btn`/`mouse-to` verbs + `tests/mouse-probe.HC`).
 - **Viewport presentation open question (VISION.md:124-126)** — not a
   standalone plan; resolved inside plan 002 Step 1/notes.
 - **Step 4 polish (palette/dither modes, bundled shaders, load/save)** —

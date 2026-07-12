@@ -50,6 +50,15 @@ Scope (deliberately small — Shadertoy-subset GLSL, not the spec):
 - control flow: `if/for/while`, function definitions
 - no textures/buffers initially (Stage E adds a channel0 sampler maybe)
 
+**Amendment (2026-07-12, per the user):** the input box takes **ONLY
+GLSL** — the temporary HolyC `MainImage` dialect (step 1) is development
+scaffolding, never a product mode. The compatibility target grows beyond
+the minimal subset above: **most Shadertoy fragment shaders should run**
+(no textures/buffers, and simplifications where the 16-color output
+demands them). The 16-color gamut is bridged with **Bayer ordered
+dithering** (a deterministic threshold matrix, testable via screendump —
+preferred over the random `ROPF_PROBABILITY_DITHER`).
+
 Where it runs: **in the guest — the v1 input box takes GLSL directly.**
 A host-side Python prototype (`tools/glsl2hc.py`) comes first purely as a
 development vehicle (fast iteration on the emitter, testable against the
@@ -123,5 +132,7 @@ error < ε").
   under both TCG and KVM before committing.
 - Viewport presentation: `draw_it` callback redrawing a cached bitmap vs
   blitting into a `CDC` sprite; whichever survives window drag cheaper.
-- Whether Stage E (in-guest GLSL) is worth it vs polishing the HolyC
-  shader dialect — revisit after Stage D exists.
+- ~~Whether Stage E (in-guest GLSL) is worth it vs polishing the HolyC
+  shader dialect~~ — **resolved 2026-07-12: GLSL only.** The input box
+  takes GLSL exclusively; the HolyC dialect never ships (see the
+  amendment in §1).
