@@ -86,20 +86,13 @@ holy_allocate_run_dir() {
     flock -u 6 || return 2
 }
 
-# Ship GLSL unchanged for the product compiler. Also retain the transitional
-# host artifact so out-of-slice fixtures keep working while compatibility grows.
+# Ship GLSL unchanged for the in-guest compiler and launch the HolyToy app.
 holy_prepare_glsl() {
     case "$SRC" in
         *.glsl) ;;
         *) return 0 ;;
     esac
     export HOLYTOY_GLSL="$(realpath "$SRC")"
-    if ! python3 "$ROOT/tools/glsl2hc.py" "$SRC" --runner none \
-            -o "$RUN_DIR/shader.HC"; then
-        echo "run: GLSL transpile failed for $SRC" >&2
-        return 1
-    fi
-    export HOLYTOY_SHADER="$RUN_DIR/shader.HC"
     SRC="$ROOT/src/holytoy/HT.HC"
 }
 

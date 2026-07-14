@@ -15,6 +15,11 @@ class CorpusCompatTests(unittest.TestCase):
             "void mainImage(out vec4 fragColor,in vec2 fragCoord){"
             "fragColor=vec4(fragCoord.y/iResolution.y);}"), "pass")
 
+    def test_time_uniform_slice(self):
+        self.assertEqual(MOD.glsl_reason(
+            "void mainImage(out vec4 fragColor,in vec2 fragCoord){"
+            "fragColor=vec4(fragCoord.y/iResolution.y+iTime/100.0);}"), "pass")
+
     def test_declaration_is_not_overclaimed(self):
         self.assertTrue(MOD.glsl_reason(
             "void mainImage(out vec4 c,in vec2 p){float x=1.;c=vec4(x);}").startswith("unsupported:"))

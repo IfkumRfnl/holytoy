@@ -7,6 +7,8 @@ Bool HtLowerNode(CHtProgram *p,I64 i)
   if (n->kind==HT_AST_BINARY)
     return HtLowerNode(p,n->left) && HtLowerNode(p,n->right);
   if (n->kind==HT_AST_NAME) {
+    if (HtTokEq(p->lex,n->tok,"iTime") && n->right<0)
+      return TRUE;
     if ((HtTokEq(p->lex,n->tok,"fragCoord") ||
          HtTokEq(p->lex,n->tok,"iResolution")) &&
         n->right>=0 && HtTokEq(p->lex,n->right,"y"))

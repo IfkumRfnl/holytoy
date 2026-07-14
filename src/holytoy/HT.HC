@@ -20,7 +20,7 @@
 #define HT_PANE_ROW	36	//first code-pane text row (window row, 8px cells)
 #define HT_SRC_ROWS	20	//source lines shown in the pane
 #define HT_STATUS_ROW	58	//status/error line (last window row)
-#define HT_SRC_MAX	8192	//transpiled GLSL starts ~2 KB; static global, cheap
+#define HT_GLSL_MAX	32768	//editor source; generated HolyC stays internal
 
 class CHtFragColor { F64 r,g,b,a; };
 class CHtUniforms
@@ -35,7 +35,8 @@ class CHtUniforms
 
 CHtUniforms ht_u;
 U0 (*ht_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
-U8 ht_src[HT_SRC_MAX];		//current shader source (the code pane content)
+U0 (*ht_default_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
+U8 ht_glsl_src[HT_GLSL_MAX];	//GLSL editor source; never replaced by HolyC
 U8 ht_status[96];		//status/error line text
 Bool ht_status_err;		//status line draws LTRED when TRUE
 Bool ht_cursor;			//GUI edit mode: draw an end-of-buffer cursor
@@ -43,52 +44,23 @@ F64 ht_t0;			//shading-loop timing start (per frame)
 I64 ht_shade_ms;		//last frame's shading time, whole ms
 Bool ht_mouse_lb_prev;		//rising-edge state for iMouse click position
 
-U8 *ht_src1=
-"U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n"
-"{//sample 1: plasma bands\n"
-"  F64 t=u->i_time,v;\n"
-"  v=Sin(frag_x*0.021+t)+\n"
-"    Sin(frag_y*0.032-t*0.7)+\n"
-"    Sin((frag_x+frag_y)*0.014+t*0.5)+\n"
-"    Sin(Sqrt(frag_x*frag_x+frag_y*frag_y)*0.019-t*1.3);\n"
-"  out_color->r=0.5+v*0.125;\n"
-"  out_color->g=0.5-v*0.125;\n"
-"  out_color->b=0.75+v*0.0625;\n"
-"  out_color->a=1.0;\n"
+U8 *ht_glsl1=
+"void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+"  fragColor = vec4(fragCoord.y / iResolution.y);\n"
 "}\n";
 
-U8 *ht_src2=
-"U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n"
-"{//sample 2: expanding bright rings\n"
-"  F64 dx=frag_x-u->res_x/2.0,dy=frag_y-u->res_y/2.0,t=u->i_time,v;\n"
-"  v=0.5+0.5*Sin(Sqrt(dx*dx+dy*dy)*0.11-t*9.0);\n"
-"  out_color->r=v; out_color->g=v*0.65; out_color->b=1.0-v*0.5;\n"
-"  out_color->a=1.0;\n"
+U8 *ht_glsl2=
+"void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+"  fragColor = vec4(1.0 - fragCoord.y / iResolution.y);\n"
 "}\n";
 
-U8 *ht_src3=
-"U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n"
-"{//sample 3: fixed-point plasma (HTMATH 16.16-turn LUT sines)\n"
-"  I64 t16=ToI64(u->i_time*0x3000),v;\n"
-"  F64 fx=frag_x,fy=frag_y;\n"
-"  v=HTMSin16(ToI64(frag_x*449.0)+t16)+\n"
-"    HTMSin16(ToI64(frag_y*323.0)-t16*7/10)+\n"
-"    HTMSin16(ToI64((frag_x+frag_y)*219.0)+t16/2)+\n"
-"    HTMSin16(ToI64(Sqrt(fx*fx+fy*fy)*250.0)-t16*13/10);\n"
-"  out_color->r=(v+0x40000)/524288.0;\n"
-"  out_color->g=1.0-out_color->r;\n"
-"  out_color->b=0.5+v/1048576.0;\n"
-"  out_color->a=1.0;\n"
-"}\n";
-
-U8 *ht_bad=
-"U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n"
-"{//deliberately broken: missing expression\n"
-"  out_color->r=;\n"
+U8 *ht_glsl_bad=
+"void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+"  fragColor = vec4(unknownName);\n"
 "}\n";
 
 U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)
-{//Built-in sample shader v1: plasma bands (same text as ht_src1).
+{//Built-in last-good shader: plasma bands while GLSL is being edited.
   F64 t=u->i_time,v;
   v=Sin(frag_x*0.021+t)+
     Sin(frag_y*0.032-t*0.7)+
@@ -112,12 +84,12 @@ U0 HtDrawPane(CTask *task,CDC *dc)
 {//Code pane: black band under the viewport, source text + status line.
   I64 sy,row,n,stride=dc->width_internal,
       y0=task->pix_top+HT_VIEW_H,y1=task->pix_top+task->pix_height;
-  U8 *p=ht_src,line[81];
+  U8 *p=ht_glsl_src,line[81];
   if (y1>dc->height) y1=dc->height;
   for (sy=y0;sy<y1;sy++)
     MemSet(&dc->body[sy*stride+task->pix_left],BLACK,task->pix_width);
   dc->color=LTGRAY;
-  GrPrint(dc,0,HT_PANE_ROW*8," HolyToy %3dms  F5 recompile  F1-F3 samples  ESC exit",ht_shade_ms);
+  GrPrint(dc,0,HT_PANE_ROW*8," HolyToy %3dms  F5 compile GLSL  F1-F2 samples  ESC exit",ht_shade_ms);
   dc->color=WHITE;
   row=HT_PANE_ROW+1;
   n=0;
@@ -133,9 +105,9 @@ U0 HtDrawPane(CTask *task,CDC *dc)
     row++;
   }
   if (ht_cursor && !*p && row<=HT_PANE_ROW+HT_SRC_ROWS) {
-    sy=StrLen(ht_src);		//cursor cell: end of buffer
+    sy=StrLen(ht_glsl_src);	//cursor cell: end of buffer
     dc->color=YELLOW;
-    if (!sy || ht_src[sy-1]=='\n')
+    if (!sy || ht_glsl_src[sy-1]=='\n')
       GrPrint(dc,8,row*8,"_");
     else
       GrPrint(dc,8+n*8,(row-1)*8,"_");
@@ -149,22 +121,17 @@ U0 HtDrawPane(CTask *task,CDC *dc)
 
 U0 (*ht_new_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
 
-Bool HtRecompile(U8 *src)
-{//Compile shader source in-task (ExePutS2, Compiler/CMain.HC:631 throws
+Bool HtInstallHoly(U8 *holy)
+{//Compile generated HolyC in-task (ExePutS2, Compiler/CMain.HC:631 throws
  //catchable exceptions); rebind ht_fp only on success.  The fresh
  //&MainImage is taken INSIDE the compiled unit (src/reload.HC pattern) so
  //it binds the newly JITed code, not the code current when this function
- //was compiled.  On failure the old shader keeps rendering.
+ //was compiled. On failure the old shader keeps rendering. Generated HolyC
+ //is never copied into the GLSL editor buffer.
   Bool ok=FALSE;
-  I64 n=StrLen(src),ec;
+  I64 n=StrLen(holy),ec;
   U8 *buf,ecs[9];
-  if (n>HT_SRC_MAX-1) {
-    HtStatus(TRUE,"COMPILE ERR source too long (%d>%d)",n,HT_SRC_MAX-1);
-    return FALSE;
-  }
-  if (src!=ht_src)
-    StrCpy(ht_src,src);		//pane always shows what was attempted
-  buf=MStrPrint("%s\nht_new_fp=&MainImage;\n",ht_src);
+  buf=MStrPrint("%s\nht_new_fp=&MainImage;\n",holy);
   ht_new_fp=NULL;
   try {
     ExePutS2(buf);
@@ -180,13 +147,32 @@ Bool HtRecompile(U8 *src)
   if (ok) {
     if (ht_new_fp) {
       ht_fp=ht_new_fp;
-      HtStatus(FALSE,"OK  compiled %d bytes",n);
+      HtStatus(FALSE,"OK  GLSL compiled (%d HolyC bytes)",n);
     } else {
       ok=FALSE;
       HtStatus(TRUE,"COMPILE ERR no MainImage bound");
     }
   }
   return ok;
+}
+
+Bool HtCompileAndSwapGlsl(U8 *glsl)
+{//The one editor/startup compile path: preserve attempted GLSL in the pane,
+ //compile it with the in-guest compiler, then atomically install generated
+ //HolyC. The current shader remains live after either kind of failure.
+  I64 n=StrLen(glsl);
+  CHtCompileResult result;
+  if (n>HT_GLSL_MAX-1) {
+    HtStatus(TRUE,"GLSL ERR source too long (%d>%d)",n,HT_GLSL_MAX-1);
+    return FALSE;
+  }
+  if (glsl!=ht_glsl_src)
+    StrCpy(ht_glsl_src,glsl);
+  if (!HtCompileGlsl(ht_glsl_src,&result)) {
+    HtStatus(TRUE,"GLSL ERR %s  previous shader kept",result.error);
+    return FALSE;
+  }
+  return HtInstallHoly(result.holy);
 }
 
 U0 HtDrawIt(CTask *task,CDC *dc)
@@ -262,41 +248,20 @@ U0 HtDrawIt(CTask *task,CDC *dc)
   HtDrawPane(task,dc);
 }
 
-Bool HtLoadShader()
-{//Compile a host-transpiled shader off the transfer disk, if present.
- //FileRead NUL-terminates (Kernel/BlkDev/FileSysFAT.HC FAT32FileRead).
-  U8 *buf;
-  I64 sz;
-  Bool ok=FALSE;
-  if (!FileFind("E:/SHADER.HC"))
-    return FALSE;
-  buf=FileRead("E:/SHADER.HC",&sz);
-  if (buf) {
-    ok=HtRecompile(buf);
-    Free(buf);
-  }
-  if (ok)
-    "HT GLSL OK\n";
-  else
-    "HT GLSL FAIL\n";
-  return TRUE;
-}
-
 Bool HtLoadGlsl()
-{//Product path: read GLSL, compile to internal HolyC in this guest task,
- //then use the existing failure-safe JIT swap and RGBA renderer pipeline.
-  U8 *buf; I64 sz; CHtCompileResult result;
+{//Read GLSL and run the same in-guest compile path used by the editor.
+ //Return TRUE when a source file was present, even if compilation failed:
+ //a handled GLSL error must stay visible instead of starting the self-test.
+  U8 *buf; I64 sz;
+  Bool ok;
   if (!FileFind("E:/SHADER.GLS")) return FALSE;
   buf=FileRead("E:/SHADER.GLS",&sz);
   if (!buf) { "HT GUEST GLSL FAIL read\n"; return FALSE; }
-  if (HtCompileGlsl(buf,&result) && HtRecompile(result.holy))
+  ok=HtCompileAndSwapGlsl(buf);
+  if (ok)
     "HT GUEST GLSL OK\n";
-  else {
-    HtStatus(TRUE,"GLSL ERR %s",result.error);
-    "HT GUEST GLSL FAIL %s\n",result.error;
-    Free(buf);
-    return FALSE;
-  }
+  else
+    "HT GUEST GLSL FAIL\n";
   Free(buf);
   return TRUE;
 }
@@ -310,17 +275,17 @@ U0 HtSelfTest()
   Bool mono=TRUE,vary=FALSE;
   Sleep(2000);			//~2s of shader v1 for the rolling frame dump
   before=ht_fp;
-  if (HtRecompile(ht_src2) && ht_fp!=before && ht_fp==ht_new_fp)
+  if (HtCompileAndSwapGlsl(ht_glsl2) && ht_fp!=before && ht_fp==ht_new_fp)
     "HT SWAP OK\n";
   else
     "HT SWAP FAIL\n";
-  if (HtRecompile(ht_src2))	//recompile of identical source is harmless
+  if (HtCompileAndSwapGlsl(ht_glsl2)) //identical GLSL is harmless
     "HT IDENT OK\n";
   else
     "HT IDENT FAIL\n";
   before=ht_fp;
   f1=ht_u.i_frame;
-  if (!HtRecompile(ht_bad) && ht_fp==before) {
+  if (!HtCompileAndSwapGlsl(ht_glsl_bad) && ht_fp==before) {
     Sleep(500);
     f2=ht_u.i_frame;
     if (f2>f1)
@@ -329,13 +294,13 @@ U0 HtSelfTest()
       "HT ERRSURVIVE FAIL frames frozen\n";
   } else
     "HT ERRSURVIVE FAIL bad source compiled\n";
-  if (HtRecompile(ht_src2))	//compiler still usable after a failure
+  if (HtCompileAndSwapGlsl(ht_glsl2)) //compiler still usable after failure
     "HT RECOVER OK\n";
   else
     "HT RECOVER FAIL\n";
   if (HTMSin16(0x4000)==0x10000 && HTMCos16(0)==0x10000 &&
-      HTMSin16(0x8000)==0 && HtRecompile(ht_src3))
-    "HT MATH OK\n";		//exact LUT entries + F3 sample compiles
+      HTMSin16(0x8000)==0)
+    "HT MATH OK\n";
   else
     "HT MATH FAIL\n";
   for (dy=0;dy<4;dy++)
@@ -353,7 +318,8 @@ U0 HtSelfTest()
     "HT DITHER OK\n";
   else
     "HT DITHER FAIL\n";
-  HtRecompile(ht_bad);		//park in the survived-error demo state
+  ht_fp=ht_default_fp;		//park on the animated default shader
+  HtCompileAndSwapGlsl(ht_glsl_bad); //show GLSL error over live viewport
 }
 
 U0 HtInteract()
@@ -369,14 +335,13 @@ U0 HtInteract()
   try {
     while (!done) {
       ch=GetKey(&sc,FALSE);
-      n=StrLen(ht_src);
+      n=StrLen(ht_glsl_src);
       switch (ch) {
         case 0:
           switch (sc.u8[0]) {
-            case SC_F1: HtRecompile(ht_src1); break;
-            case SC_F2: HtRecompile(ht_src2); break;
-            case SC_F3: HtRecompile(ht_src3); break;
-            case SC_F5: HtRecompile(ht_src);  break;
+            case SC_F1: HtCompileAndSwapGlsl(ht_glsl1); break;
+            case SC_F2: HtCompileAndSwapGlsl(ht_glsl2); break;
+            case SC_F5: HtCompileAndSwapGlsl(ht_glsl_src); break;
           }
           break;
         case CH_ESC:
@@ -385,13 +350,13 @@ U0 HtInteract()
           break;
         case CH_BACKSPACE:
           if (n)
-            ht_src[n-1]=0;
+            ht_glsl_src[n-1]=0;
           break;
         default:
           if (ch=='\n' || 32<=ch<127) {
-            if (n<HT_SRC_MAX-1) {
-              ht_src[n]=ch;
-              ht_src[n+1]=0;
+            if (n<HT_GLSL_MAX-1) {
+              ht_glsl_src[n]=ch;
+              ht_glsl_src[n+1]=0;
             }
           }
       }
@@ -403,17 +368,16 @@ U0 HtInteract()
 }
 
 Bool ht_gui=FileFind("E:/GUI.TXT");
-StrCpy(ht_src,ht_src1);
+StrCpy(ht_glsl_src,ht_glsl1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
+ht_default_fp=ht_fp;
 HTMInit;			//build the LUT once, before any F3/GLSL shading
 HTRInit;			//build the palette LUT and Bayer offsets once
 ht_u.click_x=-1;
 ht_u.click_y=-1;
 Fs->draw_it=&HtDrawIt;
 Bool ht_had_shader=HtLoadGlsl();
-if (!ht_had_shader)
-  ht_had_shader=HtLoadShader();	//temporary host-generated compatibility path
 if (ht_gui)
   HtInteract;			//shader (if any) already live in the viewport
 else if (ht_had_shader)

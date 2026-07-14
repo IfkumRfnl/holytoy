@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SLICE = re.compile(
     r"^\s*void\s+mainImage\s*\(\s*out\s+vec4\s+fragColor\s*,\s*"
     r"in\s+vec2\s+fragCoord\s*\)\s*\{\s*fragColor\s*=\s*vec4\s*\("
-    r"[0-9.fragCoodiReslutny+*/()\s-]+\)\s*;\s*\}\s*$",
+    r"[0-9.fragCoodiReslutnyTime+*/()\s-]+\)\s*;\s*\}\s*$",
     re.S,
 )
 

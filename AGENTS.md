@@ -2,16 +2,16 @@
 
 Operational reference for agents (and humans who want the details).
 The pitch is [README.md](README.md), and [docs/VISION.md](docs/VISION.md)
-contains the longer design narrative. The product direction below is
+contains the longer design narrative. The program direction below is
 authoritative when an older plan or document describes a narrower target.
 
-## Product direction (authoritative)
+## Program direction (authoritative)
 
 HolyToy is a Shadertoy-compatible application that runs **inside TempleOS**.
-Its product loop is: open HolyToy, edit GLSL, compile it in the guest, and see
+Its main loop is: open HolyToy, edit GLSL, compile it in the guest, and see
 the live result in the adjacent viewport. Host injection, Python, and the QEMU
 harness are development and verification tools; they are not runtime parts of
-the product.
+the program.
 
 ### Compatibility target
 
@@ -24,7 +24,7 @@ adaptive lower resolution, but lowering resolution must not change their
 language semantics.
 
 The old "small Shadertoy subset" was a feasibility-spike boundary, not an
-acceptable product boundary. In particular, the product compiler must be
+acceptable final boundary. In particular, the shipping compiler must be
 designed to support the GLSL used in practice, including:
 
 * structs and nested user-defined types;
@@ -38,7 +38,7 @@ designed to support the GLSL used in practice, including:
 * multipass and other Shadertoy facilities wherever corpus results show they
   are required to reach the compatibility target.
 
-Features may land incrementally, but do not simplify the final product target
+Features may land incrementally, but do not simplify the final program target
 to make an implementation plan easier. Any deliberate incompatibility must be
 recorded, corpus-measured, and justified; a missing foundational GLSL feature
 such as `struct` is unfinished work, not an acceptable permanent deviation.
@@ -52,14 +52,9 @@ model/IR, lowering, and HolyC emitter should have explicit interfaces and
 separate source files. Prefer data structures and ownership rules natural to
 HolyC instead of transliterating Python objects.
 
-`tools/glsl2hc.py` is a disposable feasibility prototype and little further
-use of it is expected. It is not the product compiler, not the architecture to
-port mechanically, not the oracle the guest compiler is judged against (GLSL
-correctness is judged against rendered output and GLSL semantics, not Python
-parity), and not evidence that a GLSL feature is complete until the in-guest
-path supports that feature. Avoid expanding the Python implementation except
-where a focused change is necessary to keep the transitional host-injection
-pipeline (plans 006-007) working until the guest compiler replaces it.
+The disposable host-side feasibility compiler has been removed. Do not
+reintroduce host-side shader compilation: GLSL correctness is judged against
+rendered output and GLSL semantics through the in-guest path.
 
 The temporary HolyC `MainImage` editing dialect is scaffolding only. The
 shipping editor accepts GLSL. Generated HolyC stays internal, is compiled with
@@ -68,7 +63,7 @@ while keeping the previous shader alive.
 
 ### How progress is judged
 
-Infrastructure and spikes are enabling work, not proportional product
+Infrastructure and spikes are enabling work, not proportional program
 completion. Report these independently:
 
 1. corpus compile/run compatibility percentage and important unsupported
@@ -79,7 +74,7 @@ completion. Report these independently:
 5. harness/test health.
 
 A host-only transpiler passing unit tests or rendering fixture shaders is a
-useful proof, but it does not count as completion of the corresponding product
+useful proof, but it does not count as completion of the corresponding guest
 compiler feature.
 
 ## Commands
@@ -87,7 +82,7 @@ compiler feature.
 ```
 make golden                      # one-time: ISO -> installed golden image (~1-2 min, unattended)
 make run SRC=src/gradient.HC     # one cycle (~20 s): inject, boot, screenshot, extract logs
-make run SRC=tests/glsl/foo.glsl # .glsl: transpiled host-side, runs inside the HolyToy app
+make run SRC=tests/glsl/foo.glsl # .glsl: compiled in-guest, runs inside HolyToy
 make watch SRC=...               # re-run on every save
 make gui [SRC=...]               # visible QEMU window (WSLg); guest stays up, no auto-reboot
 make test                        # the ten proofs (must stay green)
@@ -163,11 +158,9 @@ GLSL sources: when SRC ends in `.glsl`, run.sh/gui.sh ship the original as
 `E:/SHADER.GLS` and retarget the run at `src/holytoy/HT.HC`
 (`holy_prepare_glsl`, tools/run-common.sh). HolyToy's guest lexer, parser,
 lowering pass, and emitter compile the supported slice to internal HolyC and
-print `HT GUEST GLSL OK`. During the compatibility ramp the host prototype
-also produces `RUN_DIR/shader.HC` as a fallback for unsupported fixtures;
-that fallback is development scaffolding, not product completion. mkxfer.sh
-ships both requested shader artifacts and always ships the five compiler
-modules plus `HTMATH.HC` and `HTRENDER.HC`; HT.HC includes the modules.
+print `HT GUEST GLSL OK`. There is no host-generated HolyC fallback.
+mkxfer.sh ships the original GLSL and always ships the five compiler modules
+plus `HTMATH.HC` and `HTRENDER.HC`; HT.HC includes the modules.
 The app shader ABI returns unclamped RGBA through `CHtFragColor`. The
 renderer owns clamping, bottom-left pixel-center coordinates, palette
 quantization, and deterministic 4x4 Bayer dithering.
@@ -175,7 +168,7 @@ quantization, and deterministic 4x4 Bayer dithering.
 Run `python3 tools/corpus_compat.py` for the current versioned-fixture
 compatibility baseline and unsupported-feature breakdown. This small repo
 fixture set is a smoke corpus, not the large public corpus required for the
-~99% product target.
+~99% compatibility target.
 
 The ABI carries mouse positions in raw viewport pixels with Y down. Emitted
 GLSL maps these to Shadertoy `iMouse`: xy is the current Y-up position; zw is

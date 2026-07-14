@@ -4,7 +4,7 @@ Status: **spec for the first version.** This is not a someday/stretch
 document — everything below is what v1, the first real release, contains.
 What exists today is the dev harness (README.md): host-driven
 edit→inject→boot→screenshot cycles, which is the proof loop we build the
-app with, not the product.
+app with, not part of the final program.
 
 ## Target UX
 
@@ -52,19 +52,17 @@ Scope (deliberately small — Shadertoy-subset GLSL, not the spec):
 
 **Amendment (2026-07-12, per the user):** the input box takes **ONLY
 GLSL** — the temporary HolyC `MainImage` dialect (step 1) is development
-scaffolding, never a product mode. The compatibility target grows beyond
+scaffolding, never a user-facing mode. The compatibility target grows beyond
 the minimal subset above: **most Shadertoy fragment shaders should run**
 (no textures/buffers, and simplifications where the 16-color output
 demands them). The 16-color gamut is bridged with **Bayer ordered
 dithering** (a deterministic threshold matrix, testable via screendump —
 preferred over the random `ROPF_PROBABILITY_DITHER`).
 
-Where it runs: **in the guest — the v1 input box takes GLSL directly.**
-A host-side Python prototype (`tools/glsl2hc.py`) comes first purely as a
-development vehicle (fast iteration on the emitter, testable against the
-harness before the app exists), then the emitter is ported to HolyC and
-embedded in the app. The GLSL subset above is chosen small precisely so
-the in-guest port is realistic.
+Where it runs: **in the guest — the input box takes GLSL directly.** The
+compiler is written in HolyC and embedded in the app. Host injection and
+the QEMU harness exercise that same in-guest path; they do not generate
+HolyC shader source.
 
 ### 2. Shader ABI in HolyC
 
@@ -117,7 +115,7 @@ per-pixel F64 transcendentals won't hit interactive rates. The plan:
 |------|-------------|
 | 1 | **HolyToy app skeleton in the guest**: split window — editable code box (DolDoc edit control) + animating viewport task. Recompile-on-change via `ExePutS2`; compile errors render inline in the code pane, never crash the app. Temporary shader dialect: HolyC `MainImage` ABI (§2), so the app is exercisable before the transpiler lands. |
 | 2 | perf floor: LUT/fixed-point math lib, render-scale viewport, ms/frame readout |
-| 3 | GLSL in the input box: transpiler prototyped host-side (`glsl2hc.py`) for fast iteration, then embedded so the guest compiles GLSL without host help; Shadertoy uniforms incl. real `iMouse` |
+| 3 | GLSL in the input box: the embedded HolyC compiler compiles GLSL without host help; Shadertoy uniforms incl. real `iMouse` |
 | 4 | polish to call it v1: palette-cycling/dithering modes, a few bundled example shaders, shader load/save on the transfer disk |
 
 The existing harness (README) stays the outer proof loop for every step:

@@ -6,11 +6,10 @@
 #   4. animate      plasma produces distinct frames and a GIF
 #   5. parallel     simultaneous VMs keep disks/artifacts isolated
 #   6. holytoy      app skeleton: live recompile self-test + animating viewport
-#   7. glsl-static  transpiled GLSL runs standalone (--runner static)
-#   8. glsl-app     .glsl source animates inside the app (--runner none)
-#   9. mouse        QMP mouse injection lands on a pixel and clicks
-#  10. dither       static GLSL gradient is deterministic and spatially dithered
-#  11. guest-glsl   raw GLSL is compiled in-guest and rendered through HTRENDER
+#   7. glsl-app     raw GLSL compiles in-guest and animates inside the app
+#   8. mouse        QMP mouse injection lands on a pixel and clicks
+#   9. dither       static GLSL gradient is deterministic and spatially dithered
+#  10. guest-glsl   raw GLSL is compiled in-guest and rendered through HTRENDER
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -18,10 +17,6 @@ cd "$ROOT"
 
 tools/test-run-locks.sh || exit 2
 
-python3 tools/test_glsl2hc.py >/dev/null 2>&1 || {
-    echo "test.sh: glsl2hc unit tests failed - run python3 tools/test_glsl2hc.py" >&2
-    exit 2
-}
 python3 tools/test_corpus_compat.py >/dev/null 2>&1 || {
     echo "test.sh: corpus compatibility tests failed - run python3 tools/test_corpus_compat.py" >&2
     exit 2
@@ -44,9 +39,8 @@ new_run_path() {
 TMP_SMOKE=""
 TMP_PARALLEL_A=""
 TMP_PARALLEL_B=""
-TMP_GLSL_STATIC=""
 cleanup_sources() {
-    rm -f -- "$TMP_SMOKE" "$TMP_PARALLEL_A" "$TMP_PARALLEL_B" "$TMP_GLSL_STATIC"
+    rm -f -- "$TMP_SMOKE" "$TMP_PARALLEL_A" "$TMP_PARALLEL_B"
 }
 trap cleanup_sources EXIT
 trap 'exit 130' INT
@@ -184,27 +178,9 @@ else
     bad "holytoy: run.sh exited $RC (run $RD)"
 fi
 
-# 7. glsl-static: transpiled GLSL renders standalone under the static runner
-TMP_GLSL_STATIC="$(mktemp -p "${TMPDIR:-/tmp}" glsl-static-XXXX.HC)"
-RD="$(new_run_path glsl-static)"
-if python3 tools/glsl2hc.py tests/glsl/gradient.glsl --runner static \
-        -o "$TMP_GLSL_STATIC" &&
-   RUN_DIR="$RD" tools/run.sh "$TMP_GLSL_STATIC"; then
-    INFO="$(python3 tools/imginfo.py "$RD/latest.png" 2>/dev/null || echo "0 0 0")"
-    read -r W H NCOLORS <<<"$INFO"
-    if [ "$W" = 640 ] && [ "$H" = 480 ] && [ "$NCOLORS" -ge 8 ]; then
-        ok "glsl-static: transpiled gradient is ${W}x${H} with $NCOLORS colors"
-    else
-        bad "glsl-static: screenshot looks wrong (${W}x${H}, $NCOLORS colors; run $RD)"
-    fi
-else
-    RC=$?
-    bad "glsl-static: transpile or run failed with $RC (run $RD)"
-fi
-
-# 8. glsl-app: a .glsl source transpiles, injects, and animates in the app
+# 7. glsl-app: raw GLSL compiles in-guest and animates in the app
 RD="$(new_run_path glsl-app)"
-if RUN_DIR="$RD" tools/run.sh tests/glsl/plasma.glsl; then
+if RUN_DIR="$RD" tools/run.sh tests/glsl/live-gradient.glsl; then
     frame_files=("$RD"/frames/frame-*.png)
     if [ -e "${frame_files[0]}" ]; then
         DISTINCT="$(printf '%s\0' "${frame_files[@]}" | tail -z -n 6 |
@@ -212,17 +188,17 @@ if RUN_DIR="$RD" tools/run.sh tests/glsl/plasma.glsl; then
     else
         DISTINCT=0
     fi
-    if grep -q "HT GLSL OK" "$RD/guest.log" && [ "$DISTINCT" -ge 3 ]; then
-        ok "glsl-app: HT GLSL OK and $DISTINCT distinct frames"
+    if grep -q "HT GUEST GLSL OK" "$RD/guest.log" && [ "$DISTINCT" -ge 3 ]; then
+        ok "glsl-app: guest GLSL compiled and produced $DISTINCT distinct frames"
     else
-        bad "glsl-app: missing HT GLSL OK or <3 distinct frames (got $DISTINCT; run $RD)"
+        bad "glsl-app: missing HT GUEST GLSL OK or <3 distinct frames (got $DISTINCT; run $RD)"
     fi
 else
     RC=$?
     bad "glsl-app: run.sh exited $RC (run $RD)"
 fi
 
-# 9. mouse: QMP mouse injection lands within tolerance and the click is seen
+# 8. mouse: QMP mouse injection lands within tolerance and the click is seen
 RD="$(new_run_path mouse)"
 RUN_DIR="$RD" tools/run.sh tests/mouse-probe.HC &
 MOUSE_PID=$!
@@ -265,7 +241,7 @@ else
     fi
 fi
 
-# 10. dither: a static app shader is deterministic and varies across space
+# 9. dither: a static app shader is deterministic and varies across space
 RD="$(new_run_path dither)"
 if RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl; then
     frame_files=("$RD"/frames/frame-*.png)
@@ -306,14 +282,13 @@ else
     bad "dither: run.sh exited $RC (run $RD)"
 fi
 
-# 11. guest-glsl: the raw source, not SHADER.HC, succeeds in the new compiler.
+# 10. guest-glsl: raw source succeeds in the in-guest compiler.
 RD="$(new_run_path guest-glsl)"
 if RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl; then
     INFO="$(python3 tools/imginfo.py "$RD/latest.png" --crop 0,8,640x288 \
         2>/dev/null || echo "0 0 0")"
     read -r W H NCOLORS <<<"$INFO"
     if grep -q "HT GUEST GLSL OK" "$RD/guest.log" &&
-       ! grep -q "HT GLSL OK" "$RD/guest.log" &&
        [ "$W" = 640 ] && [ "$H" = 288 ] && [ "$NCOLORS" -ge 4 ]; then
         ok "guest-glsl: raw GLSL compiled in guest and rendered ($NCOLORS colors)"
     else

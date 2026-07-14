@@ -44,10 +44,6 @@ mcopy -o "$ROOT/src/holytoy/HTCOMP.HC" x:/HTCOMP.HC
 if [ -n "${HOLYTOY_GLSL:-}" ]; then
     mcopy -o "$HOLYTOY_GLSL" x:/SHADER.GLS
 fi
-# Transpiled shader for the app: HT.HC compiles it at startup when present.
-if [ -n "${HOLYTOY_SHADER:-}" ]; then
-    mcopy -o "$HOLYTOY_SHADER" x:/SHADER.HC
-fi
 # GUI marker: tells RUN.HC to leave the guest running instead of rebooting.
 if [ -n "${HOLYTOY_GUI:-}" ]; then
     echo gui | mcopy -o - x:/GUI.TXT

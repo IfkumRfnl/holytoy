@@ -14,7 +14,8 @@ Bool HtEmitExpr(CHtProgram *p,I64 i)
     CatPrint(ht_emit_buf,"%s",text);
   } else if (n->kind==HT_AST_NAME) {
     if (HtTokEq(p->lex,n->tok,"fragCoord")) CatPrint(ht_emit_buf,"frag_y");
-    else CatPrint(ht_emit_buf,"u->res_y");
+    else if (HtTokEq(p->lex,n->tok,"iResolution")) CatPrint(ht_emit_buf,"u->res_y");
+    else CatPrint(ht_emit_buf,"u->i_time");
   } else if (n->kind==HT_AST_BINARY) {
     CatPrint(ht_emit_buf,"(");
     if (!HtEmitExpr(p,n->left)) return FALSE;
