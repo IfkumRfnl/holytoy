@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-MARKER = re.compile(r"HT CORPUS (\S+) (compile|install|exec|read) (OK|ERR)\s*(.*)")
+MARKER = re.compile(r"HT CORPUS (\S+) (compile|install|exec|read) (OK|ERR)[ \t]*([^\r\n]*)")
 DONE = re.compile(r"HT CORPUS DONE (\d+)/(\d+)")
 
 STAGES = ("compile", "install", "exec")

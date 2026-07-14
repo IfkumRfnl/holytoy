@@ -36,6 +36,8 @@ if [ -n "$SRC" ]; then
 fi
 mcopy -o "$ROOT/src/holytoy/HTMATH.HC" x:/HTMATH.HC
 mcopy -o "$ROOT/src/holytoy/HTRENDER.HC" x:/HTRENDER.HC
+mcopy -o "$ROOT/src/holytoy/HTLIB.HC" x:/HTLIB.HC
+mcopy -o "$ROOT/src/holytoy/HTPP.HC" x:/HTPP.HC
 mcopy -o "$ROOT/src/holytoy/HTLEX.HC" x:/HTLEX.HC
 mcopy -o "$ROOT/src/holytoy/HTPARSE.HC" x:/HTPARSE.HC
 mcopy -o "$ROOT/src/holytoy/HTLOWER.HC" x:/HTLOWER.HC

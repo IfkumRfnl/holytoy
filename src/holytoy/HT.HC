@@ -9,7 +9,9 @@
 
 #include "E:/HTMATH.HC"	//LUT sin/cos (16.16 turns); mkxfer.sh ships it always
 #include "E:/HTRENDER.HC"	//RGBA palette quantizer; mkxfer.sh ships it always
-#include "E:/HTLEX.HC"	//in-guest GLSL compiler modules (plan 008)
+#include "E:/HTLIB.HC"	//shader runtime: vector/matrix classes + builtins
+#include "E:/HTPP.HC"	//in-guest GLSL compiler modules (plans 008/009)
+#include "E:/HTLEX.HC"
 #include "E:/HTPARSE.HC"
 #include "E:/HTLOWER.HC"
 #include "E:/HTEMIT.HC"
@@ -31,6 +33,8 @@ class CHtUniforms
   I64 mouse_x,mouse_y;	//current viewport px, Y-down (raw)
   I64 mouse_lb;		//1 while left button is held
   I64 click_x,click_y;	//last press, viewport px, Y-down; -1 = never
+  I64 date_year,date_mon,date_day;	//local date (iDate.xyz)
+  F64 date_secs;	//seconds since local midnight (iDate.w)
 };
 
 CHtUniforms ht_u;
@@ -201,6 +205,12 @@ U0 HtDrawIt(CTask *task,CDC *dc)
   CHtFragColor fc;
   if (vh>task->pix_height)
     vh=task->pix_height;
+  CDateStruct ds;
+  Date2Struct(&ds,Now);
+  ht_u.date_year=ds.year;
+  ht_u.date_mon=ds.mon;
+  ht_u.date_day=ds.day_of_mon;
+  ht_u.date_secs=ds.hour*3600.0+ds.min*60.0+ds.sec;
   ht_u.i_time=tS;
   ht_u.i_frame++;
   ht_u.res_x=vw;
@@ -319,6 +329,7 @@ U0 HtSelfTest()
     "HT MATH OK\n";
   else
     "HT MATH FAIL\n";
+  HtLibSelfTest;		//prints HT LIB OK/FAIL (F64 LUT + bit ops)
   for (dy=0;dy<4;dy++)
     for (dx=0;dx<4;dx++) {
       if (HtQuantize(0,0,0,dx,dy)!=BLACK ||
@@ -566,6 +577,7 @@ ht_fp=&MainImage;
 ht_default_fp=ht_fp;
 HTMInit;			//build the LUT once, before any F3/GLSL shading
 HTRInit;			//build the palette LUT and Bayer offsets once
+HtLibInit;			//F64 sine table for generated shader code
 ht_u.click_x=-1;
 ht_u.click_y=-1;
 ht_native_editor=FALSE;
@@ -575,11 +587,14 @@ if (ht_gui) {
   ht_ac_was_on=AutoComplete(OFF);
   WinFocus(Fs);
 }
-Fs->draw_it=&HtDrawIt;
 Bool ht_had_shader=FALSE;
-if (FileFind("E:/CORPUS.TXT"))
-  HtCorpusRun;			//batch corpus measurement, markers in log
-else {
+if (FileFind("E:/CORPUS.TXT")) {
+  //Batch measurement first, with no draw_it installed: rendering the
+  //previous shader at full viewport would starve every later compile.
+  HtCorpusRun;
+  Fs->draw_it=&HtDrawIt;
+} else {
+  Fs->draw_it=&HtDrawIt;
   ht_had_shader=HtLoadGlsl();
   if (ht_gui)
     HtInteract;			//shader (if any) already live in the viewport

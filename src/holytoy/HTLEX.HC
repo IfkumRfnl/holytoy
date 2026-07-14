@@ -188,12 +188,16 @@ Bool HtLex(CHtLexer *l,U8 *src)
                (!StrNCmp(src+l->pos,"*=",2)) ||
                (!StrNCmp(src+l->pos,"/=",2)) ||
                (!StrNCmp(src+l->pos,"%=",2)) ||
+               (!StrNCmp(src+l->pos,"&=",2)) ||
+               (!StrNCmp(src+l->pos,"|=",2)) ||
+               (!StrNCmp(src+l->pos,"^=",2)) ||
                (!StrNCmp(src+l->pos,"==",2)) ||
                (!StrNCmp(src+l->pos,"!=",2)) ||
                (!StrNCmp(src+l->pos,"<=",2)) ||
                (!StrNCmp(src+l->pos,">=",2)) ||
                (!StrNCmp(src+l->pos,"&&",2)) ||
                (!StrNCmp(src+l->pos,"||",2)) ||
+               (!StrNCmp(src+l->pos,"^^",2)) ||
                (!StrNCmp(src+l->pos,"<<",2)) ||
                (!StrNCmp(src+l->pos,">>",2)))
         n=2;
@@ -217,4 +221,18 @@ Bool HtTokEq(CHtLexer *l,I64 i,U8 *s)
   I64 n=StrLen(s);
   if (i<0 || i>=l->count) return FALSE;
   return l->tok[i].len==n && !StrNCmp(l->src+l->tok[i].start,s,n);
+}
+
+Bool HtTokSame(CHtLexer *l,I64 a,I64 b)
+{
+  CHtToken *x=&l->tok[a],*y=&l->tok[b];
+  return x->len==y->len && !StrNCmp(l->src+x->start,l->src+y->start,x->len);
+}
+
+U0 HtTokText(CHtLexer *l,I64 i,U8 *buf,I64 buf_len)
+{//Copy token text into a fixed buffer, truncating safely.
+  I64 n=l->tok[i].len;
+  if (n>buf_len-1) n=buf_len-1;
+  MemCpy(buf,l->src+l->tok[i].start,n);
+  buf[n]=0;
 }
