@@ -39,7 +39,9 @@ U0 (*ht_default_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color
 U8 ht_glsl_src[HT_GLSL_MAX];	//GLSL editor source; never replaced by HolyC
 U8 ht_status[96];		//status/error line text
 Bool ht_status_err;		//status line draws LTRED when TRUE
-Bool ht_cursor;			//GUI edit mode: draw an end-of-buffer cursor
+Bool ht_native_editor;		//a native CDoc backs the visible editor pane
+I64 ht_edit_line,ht_edit_col;	//zero-based native CDoc cursor position
+I64 ht_edit_top,ht_edit_left;	//visible source origin in lines/columns
 F64 ht_t0;			//shading-loop timing start (per frame)
 I64 ht_shade_ms;		//last frame's shading time, whole ms
 Bool ht_mouse_lb_prev;		//rising-edge state for iMouse click position
@@ -81,42 +83,48 @@ U0 HtStatus(Bool err,U8 *fmt,...)
 }
 
 U0 HtDrawPane(CTask *task,CDC *dc)
-{//Code pane: black band under the viewport, source text + status line.
-  I64 sy,row,n,stride=dc->width_internal,
+{//Code pane: draw the native CDoc's plain-text snapshot below the viewport.
+  I64 sy,row,n,i,line_num=0,stride=dc->width_internal,
       y0=task->pix_top+HT_VIEW_H,y1=task->pix_top+task->pix_height;
   U8 *p=ht_glsl_src,line[81];
   if (y1>dc->height) y1=dc->height;
   for (sy=y0;sy<y1;sy++)
     MemSet(&dc->body[sy*stride+task->pix_left],BLACK,task->pix_width);
   dc->color=LTGRAY;
-  GrPrint(dc,0,HT_PANE_ROW*8," HolyToy %3dms  F5 compile GLSL  F1-F2 samples  ESC exit",ht_shade_ms);
+  GrPrint(dc,0,HT_PANE_ROW*FONT_HEIGHT,
+          " HolyToy %3dms  F5 compile  F1-F2 samples  ESC exit",ht_shade_ms);
+  while (*p && line_num<ht_edit_top) {
+    while (*p && *p!='\n') p++;
+    if (*p=='\n') p++;
+    line_num++;
+  }
   dc->color=WHITE;
   row=HT_PANE_ROW+1;
-  n=0;
-  while (*p && row<HT_PANE_ROW+1+HT_SRC_ROWS) {
+  while (row<HT_PANE_ROW+1+HT_SRC_ROWS &&
+        (*p || line_num==ht_edit_line)) {
     n=0;
+    i=0;
+    while (*p && *p!='\n' && i<ht_edit_left) { p++; i++; }
     while (*p && *p!='\n' && n<78)
       line[n++]=*p++;
     line[n]=0;
-    while (*p && *p!='\n')
-      p++;
+    while (*p && *p!='\n') p++;
     if (*p=='\n') p++;
-    GrPrint(dc,8,row*8,"%s",line);
+    GrPrint(dc,8,row*FONT_HEIGHT,"%s",line);
     row++;
+    line_num++;
   }
-  if (ht_cursor && !*p && row<=HT_PANE_ROW+HT_SRC_ROWS) {
-    sy=StrLen(ht_glsl_src);	//cursor cell: end of buffer
+  if (ht_native_editor && ht_edit_top<=ht_edit_line<ht_edit_top+HT_SRC_ROWS &&
+      ht_edit_left<=ht_edit_col<ht_edit_left+78) {
     dc->color=YELLOW;
-    if (!sy || ht_glsl_src[sy-1]=='\n')
-      GrPrint(dc,8,row*8,"_");
-    else
-      GrPrint(dc,8+n*8,(row-1)*8,"_");
+    GrPrint(dc,8+(ht_edit_col-ht_edit_left)*FONT_WIDTH,
+            (HT_PANE_ROW+1+ht_edit_line-ht_edit_top)*FONT_HEIGHT,"_");
   }
   if (ht_status_err)
     dc->color=LTRED;
   else
     dc->color=LTGREEN;
-  GrPrint(dc,0,HT_STATUS_ROW*8," %s",ht_status);
+  GrPrint(dc,0,HT_STATUS_ROW*FONT_HEIGHT," %s",ht_status);
 }
 
 U0 (*ht_new_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
@@ -160,7 +168,9 @@ Bool HtCompileAndSwapGlsl(U8 *glsl)
 {//The one editor/startup compile path: preserve attempted GLSL in the pane,
  //compile it with the in-guest compiler, then atomically install generated
  //HolyC. The current shader remains live after either kind of failure.
-  I64 n=StrLen(glsl);
+  Bool ok;
+  F64 started=tS;
+  I64 n=StrLen(glsl),holy_n;
   CHtCompileResult result;
   if (n>HT_GLSL_MAX-1) {
     HtStatus(TRUE,"GLSL ERR source too long (%d>%d)",n,HT_GLSL_MAX-1);
@@ -172,7 +182,13 @@ Bool HtCompileAndSwapGlsl(U8 *glsl)
     HtStatus(TRUE,"GLSL ERR %s  previous shader kept",result.error);
     return FALSE;
   }
-  return HtInstallHoly(result.holy);
+  ok=HtInstallHoly(result.holy);
+  holy_n=StrLen(result.holy);
+  HtCompileResultDel(&result);
+  if (ok)
+    HtStatus(FALSE,"OK  GLSL->viewport %dms (%d HolyC bytes)",
+             ToI64((tS-started)*1000.0),holy_n);
+  return ok;
 }
 
 U0 HtDrawIt(CTask *task,CDC *dc)
@@ -322,52 +338,138 @@ U0 HtSelfTest()
   HtCompileAndSwapGlsl(ht_glsl_bad); //show GLSL error over live viewport
 }
 
+U8 *HtEditorSave(CDoc *doc)
+{//DocSave otherwise serializes its temporary cursor marker. Hide it only
+ //for the snapshot; the native editor cursor remains enabled for display.
+  I64 flags=doc->flags;
+  Bool unlock=DocLock(doc);
+  U8 *res;
+  doc->flags|=DOCF_NO_CURSOR;
+  res=DocSave(doc);
+  doc->flags=flags;
+  if (unlock)
+    DocUnlock(doc);
+  return res;
+}
+
+Bool HtEditorSync(CDoc *doc,Bool changed_by_user)
+{//Mirror plain GLSL out of CDoc. Comparing serialized text makes cursor,
+ //selection and scrolling keys compile-neutral.
+  Bool changed=FALSE;
+  I64 n;
+  U8 *src=HtEditorSave(doc);
+  n=StrLen(src);
+  if (n>=HT_GLSL_MAX) {
+    HtStatus(TRUE,"GLSL ERR source too long (%d>%d)",n,HT_GLSL_MAX-1);
+  } else if (StrCmp(src,ht_glsl_src)) {
+    StrCpy(ht_glsl_src,src);
+    changed=TRUE;
+    if (changed_by_user)
+      HtStatus(FALSE,"EDIT  compiling after pause...");
+  }
+  ht_edit_line=doc->line-1;
+  ht_edit_col=doc->col-1;
+  if (ht_edit_line<0) ht_edit_line=0;
+  if (ht_edit_col<0) ht_edit_col=0;
+  if (ht_edit_line<ht_edit_top)
+    ht_edit_top=ht_edit_line;
+  else if (ht_edit_line>=ht_edit_top+HT_SRC_ROWS)
+    ht_edit_top=ht_edit_line-HT_SRC_ROWS+1;
+  if (ht_edit_col<ht_edit_left)
+    ht_edit_left=ht_edit_col;
+  else if (ht_edit_col>=ht_edit_left+78)
+    ht_edit_left=ht_edit_col-77;
+  Free(src);
+  return changed;
+}
+
+U0 HtEditorLoad(CDoc *doc,U8 *src)
+{//Replace the native editor text and reset its undo history.
+  DocRst(doc,TRUE);
+  doc->flags|=DOCF_PLAIN_TEXT|DOCF_ALLOW_UNDO;
+  DocLoad(doc,src,StrLen(src));
+  HtEditorSync(doc,FALSE);
+}
+
 U0 HtInteract()
 {//GUI sessions only (E:/GUI.TXT present): own the keyboard until ESC.
- //Minimal live loop: printable keys append at the end of the buffer,
- //BACKSPACE deletes, ENTER inserts a newline, F5 recompiles the buffer,
- //F1/F2 load the samples.  Blocking GetKey is fine here - the winmgr
- //task keeps animating the viewport; headless runs never enter this.
-  I64 ch,sc,n;
-  Bool done=FALSE;
-  ht_cursor=TRUE;
-  HtStatus(FALSE,"EDIT  keys append at end of buffer; F5 recompiles");
+ //CDoc provides the native insertion, deletion, navigation, selection,
+ //clipboard and undo behavior. ScanKey keeps this task responsive enough
+ //to debounce recompiles while WinMgr continues animating the viewport.
+  CDoc *doc=DocNew("SHADER.GLS");
+  I64 ch,sc;
+  Bool done=FALSE,dirty=FALSE;
+  F64 changed_at=0.0;
+  doc->flags|=DOCF_PLAIN_TEXT|DOCF_ALLOW_UNDO;
+  DocLoad(doc,ht_glsl_src,StrLen(ht_glsl_src));
+  doc->win_task=Fs;
+  ht_edit_top=ht_edit_left=0;
+  HtEditorSync(doc,FALSE);
+  ht_native_editor=TRUE;
+  HtStatus(FALSE,"EDIT  native GLSL; changes compile after 200ms");
+  Refresh(2,TRUE);
   try {
     while (!done) {
-      ch=GetKey(&sc,FALSE);
-      n=StrLen(ht_glsl_src);
-      switch (ch) {
-        case 0:
-          switch (sc.u8[0]) {
-            case SC_F1: HtCompileAndSwapGlsl(ht_glsl1); break;
-            case SC_F2: HtCompileAndSwapGlsl(ht_glsl2); break;
-            case SC_F5: HtCompileAndSwapGlsl(ht_glsl_src); break;
-          }
-          break;
-        case CH_ESC:
-        case CH_SHIFT_ESC:
-          done=TRUE;
-          break;
-        case CH_BACKSPACE:
-          if (n)
-            ht_glsl_src[n-1]=0;
-          break;
-        default:
-          if (ch=='\n' || 32<=ch<127) {
-            if (n<HT_GLSL_MAX-1) {
-              ht_glsl_src[n]=ch;
-              ht_glsl_src[n+1]=0;
+      if (ScanKey(&ch,&sc,FALSE)) {
+        switch (ch) {
+          case 0:
+            switch (sc.u8[0]) {
+              case SC_F1:
+                HtEditorLoad(doc,ht_glsl1);
+                dirty=FALSE;
+                HtCompileAndSwapGlsl(ht_glsl_src);
+                break;
+              case SC_F2:
+                HtEditorLoad(doc,ht_glsl2);
+                dirty=FALSE;
+                HtCompileAndSwapGlsl(ht_glsl_src);
+                break;
+              case SC_F5:
+                HtEditorSync(doc,FALSE);
+                dirty=FALSE;
+                HtCompileAndSwapGlsl(ht_glsl_src);
+                break;
+              default:
+                DocPutKey(doc,ch,sc);
+                if (HtEditorSync(doc,TRUE)) {
+                  dirty=TRUE;
+                  changed_at=tS;
+                }
             }
-          }
+            break;
+          case CH_ESC:
+          case CH_SHIFT_ESC:
+            done=TRUE;
+            break;
+          case CH_CTRLA:
+            //TempleOS normally maps Ctrl-A to Save As. HolyToy follows the
+            //common editor binding and leaves deletion/copy to DocPutKey.
+            EdSelAll(doc,TRUE);
+            break;
+          default:
+            DocPutKey(doc,ch,sc);
+            if (HtEditorSync(doc,TRUE)) {
+              dirty=TRUE;
+              changed_at=tS;
+            }
+        }
+      } else {
+        if (dirty && tS-changed_at>=0.2) {
+          dirty=FALSE;
+          HtCompileAndSwapGlsl(ht_glsl_src);
+        }
+        Sleep(10);
       }
     }
   } catch
     PutExcept;
-  ht_cursor=FALSE;
-  Fs->draw_it=NULL;		//hand the screen back to the shell
+  ht_native_editor=FALSE;
+  DocDel(doc);
+  SettingsPop;			//also restores the pre-HolyToy draw_it
 }
 
-Bool ht_gui=FileFind("E:/GUI.TXT");
+Bool ht_gui=FileFind("E:/GUI.TXT") || FileFind("E:/EDIT.TXT");
+Bool ht_ac_was_on=FALSE;
 StrCpy(ht_glsl_src,ht_glsl1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
@@ -376,6 +478,13 @@ HTMInit;			//build the LUT once, before any F3/GLSL shading
 HTRInit;			//build the palette LUT and Bayer offsets once
 ht_u.click_x=-1;
 ht_u.click_y=-1;
+ht_native_editor=FALSE;
+ht_edit_line=ht_edit_col=ht_edit_top=ht_edit_left=0;
+if (ht_gui) {
+  SettingsPush;			//HtInteract restores all task settings on exit
+  ht_ac_was_on=AutoComplete(OFF);
+  WinFocus(Fs);
+}
 Fs->draw_it=&HtDrawIt;
 Bool ht_had_shader=HtLoadGlsl();
 if (ht_gui)
@@ -387,3 +496,5 @@ else if (ht_had_shader)
 				//run's job (keep the two modes separate)
 else
   HtSelfTest;
+if (ht_ac_was_on)
+  AutoComplete(ON);

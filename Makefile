@@ -4,7 +4,7 @@
 #   make run SRC=src/foo.HC  inject, boot, print isolated result directory
 #   make watch SRC=...       re-run on every save
 #   make gui [SRC=...]       visible QEMU window (WSLg), guest stays up
-#   make test                five end-to-end VM proofs
+#   make test                end-to-end host and VM proofs
 #   make fetch-iso           (re)download the TempleOS ISO
 #   make clean               remove run artifacts (never the golden image)
 

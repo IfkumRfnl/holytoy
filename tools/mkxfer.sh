@@ -48,3 +48,8 @@ fi
 if [ -n "${HOLYTOY_GUI:-}" ]; then
     echo gui | mcopy -o - x:/GUI.TXT
 fi
+# Headless editor proof: HT.HC enters its interactive loop, while RUN.HC still
+# owns status extraction and reboot after the test sends ESC.
+if [ -n "${HOLYTOY_EDIT_TEST:-}" ]; then
+    echo edit | mcopy -o - x:/EDIT.TXT
+fi

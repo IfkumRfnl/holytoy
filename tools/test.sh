@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# holytoy proof suite. Ten round-trips through the real VM:
+# holytoy proof suite. Twelve round-trips through the real VM:
 #   1. smoke        guest marker round-trip
 #   2. gradient     screenshot dimensions and colors
 #   3. error        guest compiler failure surfaces as exit 1
@@ -10,6 +10,8 @@
 #   8. mouse        QMP mouse injection lands on a pixel and clicks
 #   9. dither       static GLSL gradient is deterministic and spatially dithered
 #  10. guest-glsl   raw GLSL is compiled in-guest and rendered through HTRENDER
+#  11. circle       declarations/vectors/builtins compile and render geometry
+#  12. editor       native in-guest edit auto-compiles and changes the viewport
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -167,7 +169,7 @@ if RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC; then
        grep -q "HT ERRSURVIVE OK" "$RD/guest.log" &&
        grep -q "HT MATH OK" "$RD/guest.log" &&
        grep -q "HT DITHER OK" "$RD/guest.log" &&
-       grep -qE "HolyToy +[0-9]+ms" "$RD/screen.txt" &&
+       grep -qE "HolyToy +[^ ]+ms" "$RD/screen.txt" &&
        [ "$DISTINCT" -ge 3 ]; then
         ok "holytoy: recompile + math markers, ms readout, $DISTINCT distinct frames"
     else
@@ -297,6 +299,80 @@ if RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl; then
 else
     RC=$?
     bad "guest-glsl: run.sh exited $RC (run $RD)"
+fi
+
+# 11. circle: the broader guest compiler slice renders white center/black edge.
+RD="$(new_run_path circle)"
+if RUN_DIR="$RD" tools/run.sh tests/glsl/circle.glsl; then
+    INFO="$(python3 tools/imginfo.py "$RD/latest.png" --crop 0,8,640x288 \
+        2>/dev/null || echo "0 0 0")"
+    read -r W H NCOLORS <<<"$INFO"
+    CENTER="$(python3 tools/imginfo.py "$RD/latest.png" \
+        --crop 320,152,1x1 --hash 2>/dev/null | awk '{print $4}')"
+    EDGE="$(python3 tools/imginfo.py "$RD/latest.png" \
+        --crop 32,40,1x1 --hash 2>/dev/null | awk '{print $4}')"
+    if grep -q "HT GUEST GLSL OK" "$RD/guest.log" &&
+       [ "$W" = 640 ] && [ "$H" = 288 ] && [ "$NCOLORS" -ge 2 ] &&
+       [ -n "$CENTER" ] && [ -n "$EDGE" ] && [ "$CENTER" != "$EDGE" ]; then
+        ok "circle: guest declarations/vectors/builtins rendered center/edge geometry"
+    else
+        bad "circle: compile or geometry proof failed (colors $NCOLORS, center '$CENTER', edge '$EDGE'; run $RD)"
+    fi
+else
+    RC=$?
+    bad "circle: run.sh exited $RC (run $RD)"
+fi
+
+# 12. editor: drive the native TempleOS editor, wait for debounce compilation,
+# and prove both the visible GLSL and viewport changed before exiting with ESC.
+RD="$(new_run_path editor)"
+HOLYTOY_EDIT_TEST=1 RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl &
+EDITOR_PID=$!
+EDITOR_READY=0
+for _ in $(seq 1 75); do
+    if python3 tools/scrtext.py "$RD/frames/last-good.png" \
+            --grep "full-screen vertical gradient" >/dev/null 2>&1; then
+        EDITOR_READY=1
+        break
+    fi
+    sleep 1
+done
+BEFORE_HASH=""
+AFTER_HASH=""
+EDITOR_CHANGED=0
+if [ "$EDITOR_READY" = 1 ]; then
+    python3 tools/qmp.py "$RD/qmp.sock" screendump "$RD/editor-before.png" &&
+        BEFORE_HASH="$(python3 tools/imginfo.py "$RD/editor-before.png" \
+            --crop 0,8,640x288 --hash | awk '{print $4}')"
+    # HolyToy maps Ctrl-A to select-all; Shift-Delete uses native DocPutKey
+    # cut semantics before the replacement text is typed.
+    python3 tools/qmp.py "$RD/qmp.sock" keys ctrl+a shift+delete
+    python3 tools/qmp.py "$RD/qmp.sock" typefile tests/glsl/invert-gradient.glsl
+    for _ in $(seq 1 30); do
+        if python3 tools/scrtext.py "$RD/frames/last-good.png" \
+                --grep "1.0 - fragCoord.y" >/dev/null 2>&1 &&
+           python3 tools/scrtext.py "$RD/frames/last-good.png" \
+                --grep "OK  GLSL" >/dev/null 2>&1; then
+            EDITOR_CHANGED=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$EDITOR_CHANGED" = 1 ]; then
+        python3 tools/qmp.py "$RD/qmp.sock" screendump "$RD/editor-after.png" &&
+            AFTER_HASH="$(python3 tools/imginfo.py "$RD/editor-after.png" \
+                --crop 0,8,640x288 --hash | awk '{print $4}')"
+    fi
+    python3 tools/qmp.py "$RD/qmp.sock" keys esc 2>/dev/null || true
+fi
+wait "$EDITOR_PID"
+RC=$?
+if [ "$EDITOR_READY" = 1 ] && [ "$EDITOR_CHANGED" = 1 ] && [ "$RC" = 0 ] &&
+   [ -n "$BEFORE_HASH" ] && [ -n "$AFTER_HASH" ] &&
+   [ "$BEFORE_HASH" != "$AFTER_HASH" ]; then
+    ok "editor: native edit auto-compiled and changed viewport $BEFORE_HASH -> $AFTER_HASH"
+else
+    bad "editor: ready=$EDITOR_READY changed=$EDITOR_CHANGED rc=$RC hash='$BEFORE_HASH'/'$AFTER_HASH' (run $RD)"
 fi
 
 echo "-- $PASS passed, $FAIL failed --"

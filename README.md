@@ -40,7 +40,7 @@ No root, no KVM required (used automatically if present).
 ```sh
 make fetch-iso    # grab TempleOS 5.03 from templeos.org (~17 MB)
 make golden       # install TempleOS into images/golden.qcow2, unattended
-make test         # prove the loop end-to-end (10 VM tests)
+make test         # prove the loop end-to-end (12 VM tests)
 
 make run SRC=src/gradient.HC     # one cycle -> prints an isolated RUN_DIR
 make run SRC=tests/glsl/live-gradient.glsl # GLSL compiled inside HolyToy
@@ -87,7 +87,7 @@ troubleshooting, golden-image surgery — lives in
 
 A host-only preflight first proves allocation/pruning atomicity, isolates
 individual deletion failures, and checks the corpus compatibility tooling.
-Then ten real TempleOS VM proofs run:
+Then twelve real TempleOS VM proofs run:
 
 1. a marker string round-trips host → guest → host;
 2. the gradient renders at 640×480 with 16 colors, screenshot verified;
@@ -104,7 +104,11 @@ Then ten real TempleOS VM proofs run:
    guest observes the click;
 9. a static GLSL gradient has deterministic viewport pixels, spatially
    varying ordered dithering, and a sane 16-color gamut;
-10. raw GLSL compiles in the guest and renders through the app renderer.
+10. raw GLSL compiles in the guest and renders through the app renderer;
+11. declarations, vectors, swizzles, constructors, `length`, and `step`
+    compile in the guest and render a centered circle;
+12. QMP drives the native TempleOS editor, debounce compilation succeeds,
+    and the viewport changes before the editor exits.
 
 ## Credits
 
