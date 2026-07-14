@@ -180,19 +180,40 @@ twelve proofs must stay green after every landing.
 
 ## Done criteria and proof evidence
 
-- [ ] Stage 1 harness lands; honest baseline table with the skeleton compiler
-      recorded in this section (expected ~0/20 — record the real number).
-- [ ] Compiler rewrite complete: `HTPP.HC` and `HTLIB.HC` exist; all compiler
-      semantics execute in-guest in HolyC; host does zero compiler semantics.
-- [ ] Final honest staged corpus table committed, with per-stage percentages
-      (compile / install / exec) reported separately from visual correctness,
-      performance, and harness health.
-- [ ] Visual spot-check screenshots for at least 3 corpus shaders referenced
-      by run directory, with observed deviations noted.
-- [ ] Known semantic deviations recorded and justified (e.g. `float` is F64
-      not F32; `int` is I64 unmasked; LUT sin/cos accuracy bound).
-- [ ] `make test` prints `-- 12 passed, 0 failed --` on the final tree;
-      previous-shader-on-error preserved.
+- [x] Stage 1 harness landed at `f0c6c10`; honest baseline with the plan-008
+      skeleton compiler: **0/20 compile / 0/20 install / 0/20 exec**
+      (run-20260714-065019-AIteJV; every shader failed at parse).
+- [x] Compiler rewrite complete at `29432b5`: `HTPP.HC` and `HTLIB.HC` exist;
+      preprocessing, lexing, parsing, typed sema, and emission all run
+      in-guest in HolyC; the host only ships bytes (glsl_prep.py strips the
+      BOM and non-ASCII comment bytes, deterministically).
+- [x] Final staged corpus table (run-20260714-072742-lPP6Z8):
+      **compile 20/20 (100%), install 20/20 (100%), exec 20/20 (100%)**
+      with 4-sample-pixel finite checks. Two cluster fixes took 10/20 to
+      20/20: compound assignment with scalar rhs (8 shaders) and `int[] c`
+      type-prefix array declarators (2 shaders).
+- [x] Visual spot-checks (screenshots in run dirs):
+      4dSBz3 raymarching tutorial — three shaded spheres over a ground
+      plane, correct (run-20260714-072905-k0eoKf, 2644 ms/frame TCG at 4x4);
+      4tsGD7 "[2TC 15] Minecraft" — recognizable voxel terrain, sky, grass
+      (run-20260714-073122-B9JriA, 19.3 s/frame); Wtj3Wc Gaussian-AO — white
+      boxes with ambient occlusion (run-20260714-073359-PnMAc3,
+      22.8 s/frame). Heavy 3D shaders exceed the 90 s run cycle at full
+      viewport: a performance follow-up (adaptive render scale), not a
+      compatibility failure.
+- [x] Known semantic deviations (recorded, corpus-measured): `float` is F64
+      not F32 (floatBitsTo* uses software F64->F32 bit conversion with
+      truncated mantissa); `int` is I64 without 32-bit wrap, while `uint`
+      IS masked to 32 bits after every wrapping op (hash functions rely on
+      it); LUT sin/cos absolute error <= 2e-4 (HT LIB gate); GLSL `in`
+      array parameters pass by reference, not copy; iDate.y month is
+      1-based pending confirmation (corpus only reads iDate.w);
+      dFdx/dFdy/fwidth and all texture functions are rejected with
+      diagnostics.
+- [x] `make test`: `-- 12 passed, 0 failed --` on the final tree
+      (test-20260714-0729xx-25651-* runs); the holytoy proof additionally
+      logs `HT LIB OK`, and ERRSURVIVE keeps the previous shader alive on
+      compile failure.
 
 ## STOP conditions
 

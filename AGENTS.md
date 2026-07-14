@@ -156,19 +156,22 @@ keyboard buffer holds early presses, duplicates are harmless).
 
 GLSL sources: when SRC ends in `.glsl`, run.sh/gui.sh ship the original as
 `E:/SHADER.GLS` and retarget the run at `src/holytoy/HT.HC`
-(`holy_prepare_glsl`, tools/run-common.sh). HolyToy's guest lexer, parser,
-lowering pass, and emitter compile the supported slice to internal HolyC and
-print `HT GUEST GLSL OK`. There is no host-generated HolyC fallback.
-mkxfer.sh ships the original GLSL and always ships the five compiler modules
-plus `HTMATH.HC` and `HTRENDER.HC`; HT.HC includes the modules.
+(`holy_prepare_glsl`, tools/run-common.sh). HolyToy's guest compiler
+(preprocessor `HTPP.HC`, lexer, parser, typed sema in `HTLOWER.HC`,
+three-address emitter, orchestrated by `HTCOMP.HC`, over the `HTLIB.HC`
+shader runtime) compiles GLSL to internal HolyC and prints
+`HT GUEST GLSL OK`. There is no host-generated HolyC fallback.
+mkxfer.sh always ships the seven compiler/runtime modules plus `HTMATH.HC`
+and `HTRENDER.HC`; HT.HC includes them.
 The app shader ABI returns unclamped RGBA through `CHtFragColor`. The
 renderer owns clamping, bottom-left pixel-center coordinates, palette
 quantization, and deterministic 4x4 Bayer dithering.
 
-Run `python3 tools/corpus_compat.py` for the current versioned-fixture
-compatibility baseline and unsupported-feature breakdown. This small repo
-fixture set is a smoke corpus, not the large public corpus required for the
-~99% compatibility target.
+Corpus measurement: `tools/corpus_run.sh` preps guest-safe copies of
+`corpus/shadertoy/v1` (tools/glsl_prep.py), compiles all 20 shaders in one
+VM boot (HT.HC corpus mode, `HT CORPUS` markers), and prints the staged
+compile/install/exec table via tools/corpus_report.py. The older
+`python3 tools/corpus_compat.py` is only the static host-side smoke check.
 
 The ABI carries mouse positions in raw viewport pixels with Y down. Emitted
 GLSL maps these to Shadertoy `iMouse`: xy is the current Y-up position; zw is
