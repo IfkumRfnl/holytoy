@@ -20,7 +20,8 @@ ACCEL_ARGS=""
 [ -e /dev/kvm ] && [ -w /dev/kvm ] && ACCEL_ARGS="-enable-kvm"
 
 # Run-cycle timing (seconds)
-RUN_TIMEOUT=90            # hard kill for a normal run cycle
+RUN_TIMEOUT="${RUN_TIMEOUT:-90}"  # hard kill for a normal run cycle; corpus
+                                  # batch runs export a larger value
 FRAME_INTERVAL=0.7        # rolling screendump cadence
 ANIM_FRAMES=8             # trailing frames kept for each run's GIF and the animates proof
 # (the guest-side screenshot hold is HT_SHOW_MS in guest/RUN.HC)

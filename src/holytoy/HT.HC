@@ -338,6 +338,96 @@ U0 HtSelfTest()
   HtCompileAndSwapGlsl(ht_glsl_bad); //show GLSL error over live viewport
 }
 
+Bool HtFinite(F64 x)
+{//NaN fails x==x; huge magnitudes are treated as runaway shader output.
+  if (!(x==x)) return FALSE;
+  if (x>1e30 || x<-1e30) return FALSE;
+  return TRUE;
+}
+
+U0 HtCorpusRun()
+{//Batch mode (E:/CORPUS.TXT present): compile every shipped corpus shader
+ //in one boot and print one marker line per stage; tools/corpus_report.py
+ //turns guest.log into the staged compatibility table. No rendering here:
+ //visual checks are separate single-shader runs.
+  U8 *man,*p,*src,name[16],id[16],path[24];
+  I64 sz,i,k,n=0,pass=0;
+  F64 t0,px,py;
+  CHtCompileResult r;
+  CHtFragColor fc;
+  Bool ok;
+  man=FileRead("E:/CORPUS.TXT",&sz);
+  if (!man) {
+    "HT CORPUS FAIL manifest\n";
+    return;
+  }
+  ht_u.i_time=0.5;
+  ht_u.res_x=640;
+  ht_u.res_y=288;
+  p=man;
+  while (*p) {
+    i=0;
+    while (*p && *p!=' ' && *p!='\n' && i<15) name[i++]=*p++;
+    name[i]=0;
+    while (*p==' ') p++;
+    i=0;
+    while (*p && *p!='\n' && *p!='\r' && i<15) id[i++]=*p++;
+    id[i]=0;
+    while (*p=='\n' || *p=='\r') p++;
+    if (!*name || !*id) break;
+    n++;
+    StrPrint(path,"E:/%s.GLS",name);
+    src=FileRead(path,&sz);
+    if (!src) {
+      "HT CORPUS %s read ERR missing\n",id;
+      goto corpus_next;
+    }
+    if (!HtCompileGlsl(src,&r)) {
+      "HT CORPUS %s compile ERR %s\n",id,r.error;
+      Free(src);
+      goto corpus_next;
+    }
+    "HT CORPUS %s compile OK %d\n",id,StrLen(r.holy);
+    if (!HtInstallHoly(r.holy)) {
+      "HT CORPUS %s install ERR %s\n",id,ht_status;
+      HtCompileResultDel(&r);
+      Free(src);
+      goto corpus_next;
+    }
+    "HT CORPUS %s install OK\n",id;
+    ok=TRUE;
+    t0=tS;
+    try {
+      for (k=0;k<4;k++) {
+        //Interior, edge and corner sample points at viewport 640x288.
+        if (k==0) { px=320.5; py=144.5; }
+        else if (k==1) { px=2.5; py=285.5; }
+        else if (k==2) { px=600.5; py=20.5; }
+        else { px=16.5; py=16.5; }
+        fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
+        ht_fp(&ht_u,px,py,&fc);
+        if (!HtFinite(fc.r) || !HtFinite(fc.g) ||
+            !HtFinite(fc.b) || !HtFinite(fc.a))
+          ok=FALSE;
+      }
+    } catch {
+      Fs->catch_except=TRUE;
+      ok=FALSE;
+    }
+    if (ok) {
+      pass++;
+      "HT CORPUS %s exec OK %dms\n",id,ToI64((tS-t0)*1000.0);
+    } else
+      "HT CORPUS %s exec ERR nonfinite\n",id;
+    HtCompileResultDel(&r);
+    Free(src);
+corpus_next:;
+  }
+  Free(man);
+  "HT CORPUS DONE %d/%d\n",pass,n;
+  ht_fp=ht_default_fp;		//park on the built-in shader for the screenshot
+}
+
 U8 *HtEditorSave(CDoc *doc)
 {//DocSave otherwise serializes its temporary cursor marker. Hide it only
  //for the snapshot; the native editor cursor remains enabled for display.
@@ -486,15 +576,20 @@ if (ht_gui) {
   WinFocus(Fs);
 }
 Fs->draw_it=&HtDrawIt;
-Bool ht_had_shader=HtLoadGlsl();
-if (ht_gui)
-  HtInteract;			//shader (if any) already live in the viewport
-else if (ht_had_shader)
-  Sleep(3000);			//headless GLSL mode: just let the rolling
+Bool ht_had_shader=FALSE;
+if (FileFind("E:/CORPUS.TXT"))
+  HtCorpusRun;			//batch corpus measurement, markers in log
+else {
+  ht_had_shader=HtLoadGlsl();
+  if (ht_gui)
+    HtInteract;			//shader (if any) already live in the viewport
+  else if (ht_had_shader)
+    Sleep(3000);		//headless GLSL mode: just let the rolling
 				//screendumps capture the animating shader;
 				//the recompile markers are the no-shader
 				//run's job (keep the two modes separate)
-else
-  HtSelfTest;
+  else
+    HtSelfTest;
+}
 if (ht_ac_was_on)
   AutoComplete(ON);

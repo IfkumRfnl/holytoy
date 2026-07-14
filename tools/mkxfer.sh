@@ -44,6 +44,16 @@ mcopy -o "$ROOT/src/holytoy/HTCOMP.HC" x:/HTCOMP.HC
 if [ -n "${HOLYTOY_GLSL:-}" ]; then
     mcopy -o "$HOLYTOY_GLSL" x:/SHADER.GLS
 fi
+# Corpus batch mode: ship every prepped shader plus the CORPUS.TXT manifest;
+# HT.HC compiles them all in one boot and prints HT CORPUS markers.
+if [ -n "${HOLYTOY_CORPUS_DIR:-}" ]; then
+    [ -f "$HOLYTOY_CORPUS_DIR/CORPUS.TXT" ] || {
+        echo "mkxfer.sh: HOLYTOY_CORPUS_DIR has no CORPUS.TXT (run tools/glsl_prep.py)" >&2
+        exit 2
+    }
+    mcopy -o "$HOLYTOY_CORPUS_DIR"/S*.GLS x:/
+    mcopy -o "$HOLYTOY_CORPUS_DIR/CORPUS.TXT" x:/CORPUS.TXT
+fi
 # GUI marker: tells RUN.HC to leave the guest running instead of rebooting.
 if [ -n "${HOLYTOY_GUI:-}" ]; then
     echo gui | mcopy -o - x:/GUI.TXT
