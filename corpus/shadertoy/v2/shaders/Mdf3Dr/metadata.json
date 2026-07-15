@@ -1,0 +1,49 @@
+{
+ "author": "Reinder Nijhoff",
+ "author_handle": "reinder",
+ "author_profile_url": "https://www.shadertoy.com/user/reinder",
+ "coverage": {
+  "primary_stratum": "single_no_channels",
+  "selection_reason": "Pseudo-3D arcade road rendering in screen space.",
+  "unusual_features": [],
+  "visual_domain": "2d"
+ },
+ "license": {
+  "evidence": "[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.](https://creativecommons.org/licenses/by-nc-sa/4.0/)",
+  "evidence_location": "outrun/README.md:20 (License section)",
+  "evidence_url": "https://github.com/reindernijhoff/shadertoy/blob/2def3ce132b4f5d9590e9eee0c17bd37a011835c/outrun/README.md#license",
+  "identifier": "CC-BY-NC-SA-4.0",
+  "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+  "name": "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License",
+  "text": null
+ },
+ "passes": [
+  {
+   "ascii_only": false,
+   "bytes": 3641,
+   "inputs": [],
+   "kind": "image",
+   "name": "Image",
+   "ordinal": 0,
+   "outputs": null,
+   "path": "shaders/Mdf3Dr/image.glsl",
+   "sha256": "d61128359acfba88f4a87c97026a558c26a0ab692bebbb98311edc40bd334daf",
+   "source_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/outrun/Image.glsl"
+  }
+ ],
+ "provenance": {
+  "source_commit": "2def3ce132b4f5d9590e9eee0c17bd37a011835c",
+  "source_preservation": "Each GLSL pass was copied byte-for-byte from the pinned author-maintained backup.",
+  "source_readme": "outrun/README.md",
+  "source_readme_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/outrun/README.md",
+  "source_repository": "https://github.com/reindernijhoff/shadertoy"
+ },
+ "published_at": "2013-04-30",
+ "retrieved_at": "2026-07-15T10:57:00Z",
+ "schema_version": 1,
+ "shader_id": "Mdf3Dr",
+ "tags": null,
+ "title": "Outrun",
+ "updated_at": null,
+ "url": "https://www.shadertoy.com/view/Mdf3Dr"
+}

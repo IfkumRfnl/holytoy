@@ -1,0 +1,84 @@
+{
+ "author": "beans_please",
+ "author_handle": "beans_please",
+ "author_profile_url": "https://www.shadertoy.com/user/beans_please",
+ "coverage": {
+  "primary_stratum": "single_texture_channels",
+  "selection_reason": "Blue-noise dithering against an OETF comparison.",
+  "unusual_features": [],
+  "visual_domain": "2d"
+ },
+ "license": {
+  "evidence": "Repository root LICENSE is AGPL-3.0 and README.md states this is a personal backup of the author's Shadertoy projects.",
+  "evidence_location": "LICENSE (repository root); README.md:1",
+  "evidence_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/LICENSE",
+  "identifier": "AGPL-3.0-only",
+  "license_url": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "name": "GNU Affero General Public License v3.0",
+  "provenance_evidence_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/README.md",
+  "text": null
+ },
+ "passes": [
+  {
+   "ascii_only": true,
+   "bytes": 468,
+   "inputs": [
+    {
+     "channel": 0,
+     "evidence": "renderpass inputs in the pinned shaders_all.json snapshot",
+     "filepath": "/media/a/cb49c003b454385aa9975733aff4571c62182ccdda480aaba9a8d250014f00ec.png",
+     "sampler": {
+      "filter": "nearest",
+      "internal": "byte",
+      "srgb": "false",
+      "vflip": "true",
+      "wrap": "repeat"
+     },
+     "type": "texture"
+    }
+   ],
+   "kind": "image",
+   "name": "Image",
+   "ordinal": 0,
+   "outputs": [
+    {
+     "channel": 0,
+     "id": "4dfGRr"
+    }
+   ],
+   "path": "shaders/mtScWm/image.glsl",
+   "sha256": "d0f11d0560720fe1558d1b3672d6dcddf56213fb9aac397b9513a017001a5bbe",
+   "source_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/shaders_all.json"
+  }
+ ],
+ "provenance": {
+  "source_commit": "6baf7720d28d4440e8ebdabf9b971c34a7356545",
+  "source_preservation": "Each source pass is the exact JSON code string from the pinned author snapshot, UTF-8 encoded without normalization or edits.",
+  "source_repository": "https://github.com/bean-mhm/shaders",
+  "source_snapshot": "shaders_all.json",
+  "source_snapshot_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/shaders_all.json"
+ },
+ "published_at": null,
+ "retrieved_at": "2026-07-15T10:57:00Z",
+ "schema_version": 1,
+ "shader_id": "mtScWm",
+ "source_metadata": {
+  "likes": 11,
+  "shadertoy_info_date_unix": "1691841683",
+  "shadertoy_info_date_utc": "2023-08-12T12:01:23Z",
+  "snapshot_generated_at": "2025-09-25T14:01:38.135Z",
+  "timestamp_semantics": "The snapshot exposes info.date but does not identify it as publication versus update time.",
+  "views": 354
+ },
+ "tags": [
+  "dither",
+  "gamma",
+  "dithering",
+  "bluenoise",
+  "srgb",
+  "oetf"
+ ],
+ "title": "Blue Noise Dithering vs OETF 2.2",
+ "updated_at": null,
+ "url": "https://www.shadertoy.com/view/mtScWm"
+}

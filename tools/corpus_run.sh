@@ -13,7 +13,7 @@ export RUN_TIMEOUT="${CORPUS_TIMEOUT:-900}"
 . "$ROOT/config.sh"
 cd "$ROOT"
 
-CORPUS_DIR="${CORPUS_DIR:-corpus/shadertoy/v1}"
+CORPUS_DIR="${CORPUS_DIR:-corpus/shadertoy/v2}"
 VERSION="$(basename "$CORPUS_DIR")"
 REFS_DIR="${CORPUS_REFS:-tests/corpus-visual/refs-$VERSION}"
 PREP_DIR="$OUT/corpus-guest-$VERSION"

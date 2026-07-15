@@ -1,0 +1,68 @@
+{
+ "author": "beans_please",
+ "author_handle": "beans_please",
+ "author_profile_url": "https://www.shadertoy.com/user/beans_please",
+ "coverage": {
+  "primary_stratum": "single_no_channels",
+  "selection_reason": "Closed-form motion blur of a moving disk.",
+  "unusual_features": [],
+  "visual_domain": "2d"
+ },
+ "license": {
+  "evidence": "Repository root LICENSE is AGPL-3.0 and README.md states this is a personal backup of the author's Shadertoy projects.",
+  "evidence_location": "LICENSE (repository root); README.md:1",
+  "evidence_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/LICENSE",
+  "identifier": "AGPL-3.0-only",
+  "license_url": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "name": "GNU Affero General Public License v3.0",
+  "provenance_evidence_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/README.md",
+  "text": null
+ },
+ "passes": [
+  {
+   "ascii_only": true,
+   "bytes": 1837,
+   "inputs": [],
+   "kind": "image",
+   "name": "Image",
+   "ordinal": 0,
+   "outputs": [
+    {
+     "channel": 0,
+     "id": "4dfGRr"
+    }
+   ],
+   "path": "shaders/l3GcWh/image.glsl",
+   "sha256": "fff5f5504a162792898758e2c073be50667f6f4c3c9cc1f130559cf76573c8f9",
+   "source_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/shaders_all.json"
+  }
+ ],
+ "provenance": {
+  "source_commit": "6baf7720d28d4440e8ebdabf9b971c34a7356545",
+  "source_preservation": "Each source pass is the exact JSON code string from the pinned author snapshot, UTF-8 encoded without normalization or edits.",
+  "source_repository": "https://github.com/bean-mhm/shaders",
+  "source_snapshot": "shaders_all.json",
+  "source_snapshot_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/shaders_all.json"
+ },
+ "published_at": null,
+ "retrieved_at": "2026-07-15T10:57:00Z",
+ "schema_version": 1,
+ "shader_id": "l3GcWh",
+ "source_metadata": {
+  "likes": 0,
+  "shadertoy_info_date_unix": "1736170686",
+  "shadertoy_info_date_utc": "2025-01-06T13:38:06Z",
+  "snapshot_generated_at": "2025-09-25T14:01:38.135Z",
+  "timestamp_semantics": "The snapshot exposes info.date but does not identify it as publication versus update time.",
+  "views": 7
+ },
+ "tags": [
+  "blur",
+  "motion",
+  "analytical",
+  "disk"
+ ],
+ "title": "Analytical Motion Blur of a Disk",
+ "updated_at": null,
+ "url": "https://www.shadertoy.com/view/l3GcWh"
+}

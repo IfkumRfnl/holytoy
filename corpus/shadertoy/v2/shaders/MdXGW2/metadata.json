@@ -1,0 +1,74 @@
+{
+ "author": "Reinder Nijhoff",
+ "author_handle": "reinder",
+ "author_profile_url": "https://www.shadertoy.com/user/reinder",
+ "coverage": {
+  "primary_stratum": "single_texture_channels",
+  "selection_reason": "Water city scene over four still-texture channels.",
+  "unusual_features": [],
+  "visual_domain": "3d"
+ },
+ "license": {
+  "evidence": "[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.](https://creativecommons.org/licenses/by-nc-sa/4.0/)",
+  "evidence_location": "venice/README.md:33 (License section)",
+  "evidence_url": "https://github.com/reindernijhoff/shadertoy/blob/2def3ce132b4f5d9590e9eee0c17bd37a011835c/venice/README.md#license",
+  "identifier": "CC-BY-NC-SA-4.0",
+  "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+  "name": "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License",
+  "text": null
+ },
+ "passes": [
+  {
+   "ascii_only": false,
+   "bytes": 16353,
+   "inputs": [
+    {
+     "channel": 0,
+     "evidence": "venice/README.md Inputs section",
+     "filepath": "https://shadertoy.com/media/a/3083c722c0c738cad0f468383167a0d246f91af2bfa373e9c5c094fb8c8413e0.png",
+     "type": "texture"
+    },
+    {
+     "channel": 1,
+     "evidence": "venice/README.md Inputs section",
+     "filepath": "https://shadertoy.com/media/a/10eb4fe0ac8a7dc348a2cc282ca5df1759ab8bf680117e4047728100969e7b43.jpg",
+     "type": "texture"
+    },
+    {
+     "channel": 2,
+     "evidence": "venice/README.md Inputs section",
+     "filepath": "https://shadertoy.com/media/a/92d7758c402f0927011ca8d0a7e40251439fba3a1dac26f5b8b62026323501aa.jpg",
+     "type": "texture"
+    },
+    {
+     "channel": 3,
+     "evidence": "venice/README.md Inputs section",
+     "filepath": "https://shadertoy.com/media/a/1f7dca9c22f324751f2a5a59c9b181dfe3b5564a04b724c657732d0bf09c99db.jpg",
+     "type": "texture"
+    }
+   ],
+   "kind": "image",
+   "name": "Image",
+   "ordinal": 0,
+   "outputs": null,
+   "path": "shaders/MdXGW2/image.glsl",
+   "sha256": "0804c907a4d2fbd9827dfb0e2d3ff2edaf888a2e07dbff8c43732f68ff46ff01",
+   "source_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/venice/Image.glsl"
+  }
+ ],
+ "provenance": {
+  "source_commit": "2def3ce132b4f5d9590e9eee0c17bd37a011835c",
+  "source_preservation": "Each GLSL pass was copied byte-for-byte from the pinned author-maintained backup.",
+  "source_readme": "venice/README.md",
+  "source_readme_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/venice/README.md",
+  "source_repository": "https://github.com/reindernijhoff/shadertoy"
+ },
+ "published_at": "2013-09-18",
+ "retrieved_at": "2026-07-15T10:57:00Z",
+ "schema_version": 1,
+ "shader_id": "MdXGW2",
+ "tags": null,
+ "title": "Venice",
+ "updated_at": null,
+ "url": "https://www.shadertoy.com/view/MdXGW2"
+}
