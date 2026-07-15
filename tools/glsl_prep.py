@@ -17,6 +17,7 @@ shader-id order, and CORPUS.TXT lists "Sxx <shader_id>" one per line.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +36,20 @@ def main() -> int:
     parser.add_argument("--corpus", type=Path, default=CORPUS)
     parser.add_argument("--dest", type=Path,
                         default=ROOT / "out/corpus-guest")
+    parser.add_argument("--manifest-strata", action="store_true",
+                        help="append each shader's stratum as a third "
+                             "CORPUS.TXT field when the corpus root has a "
+                             "manifest.jsonl (the guest ignores it)")
     args = parser.parse_args()
+
+    strata: dict[str, str] = {}
+    manifest = args.corpus.parent / "manifest.jsonl"
+    if args.manifest_strata and manifest.exists():
+        for line in manifest.read_text().splitlines():
+            if line.strip():
+                obj = json.loads(line)
+                strata[obj["shader_id"]] = (
+                    obj.get("coverage", {}).get("primary_stratum", ""))
 
     shader_ids = sorted(p.name for p in args.corpus.iterdir() if p.is_dir())
     if not shader_ids:
@@ -47,7 +61,10 @@ def main() -> int:
         src = args.corpus / sid / "image.glsl"
         name = f"S{i:02d}"
         (args.dest / f"{name}.GLS").write_bytes(prep_bytes(src.read_bytes()))
-        manifest_lines.append(f"{name} {sid}")
+        line = f"{name} {sid}"
+        if strata.get(sid):
+            line += f" {strata[sid]}"
+        manifest_lines.append(line)
     (args.dest / "CORPUS.TXT").write_text("\n".join(manifest_lines) + "\n")
     print(f"glsl_prep: wrote {len(shader_ids)} guest-safe shaders to {args.dest}")
     return 0

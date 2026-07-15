@@ -1,0 +1,70 @@
+{
+ "author": "beans_please",
+ "author_handle": "beans_please",
+ "author_profile_url": "https://www.shadertoy.com/user/beans_please",
+ "coverage": {
+  "primary_stratum": "single_no_channels",
+  "selection_reason": "Frame-indexed 2D blending case.",
+  "unusual_features": [],
+  "visual_domain": "2d"
+ },
+ "license": {
+  "evidence": "Repository root LICENSE is AGPL-3.0 and README.md states this is a personal backup of the author's Shadertoy projects.",
+  "evidence_location": "LICENSE (repository root); README.md:1",
+  "evidence_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/LICENSE",
+  "identifier": "AGPL-3.0-only",
+  "license_url": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "name": "GNU Affero General Public License v3.0",
+  "provenance_evidence_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/README.md",
+  "text": null
+ },
+ "passes": [
+  {
+   "ascii_only": true,
+   "bytes": 317,
+   "inputs": [],
+   "kind": "image",
+   "name": "Image",
+   "ordinal": 0,
+   "outputs": [
+    {
+     "channel": 0,
+     "id": "4dfGRr"
+    }
+   ],
+   "path": "shaders/XX2XDd/image.glsl",
+   "sha256": "ec34348997425333926634520a6c5cc47d524cb4452b768210d7a47001ecd5f0",
+   "source_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/shaders_all.json"
+  }
+ ],
+ "provenance": {
+  "carried_forward_from": "corpus/shadertoy/v1 (image.glsl byte-for-byte; only this provenance note added for v2)",
+  "source_commit": "6baf7720d28d4440e8ebdabf9b971c34a7356545",
+  "source_preservation": "Each source pass is the exact JSON code string from the pinned author snapshot, UTF-8 encoded without normalization or edits.",
+  "source_repository": "https://github.com/bean-mhm/shaders",
+  "source_snapshot": "shaders_all.json",
+  "source_snapshot_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/shaders_all.json"
+ },
+ "published_at": null,
+ "retrieved_at": "2026-07-14T06:17:27Z",
+ "schema_version": 1,
+ "shader_id": "XX2XDd",
+ "source_metadata": {
+  "likes": 1,
+  "shadertoy_info_date_unix": "1711246176",
+  "shadertoy_info_date_utc": "2024-03-24T02:09:36Z",
+  "snapshot_generated_at": "2025-09-25T14:01:38.135Z",
+  "timestamp_semantics": "The snapshot exposes info.date but does not identify it as publication versus update time.",
+  "views": 205
+ },
+ "tags": [
+  "color",
+  "blending",
+  "blend",
+  "mixing",
+  "alternating"
+ ],
+ "title": "Run at 120+ Hz if possible",
+ "updated_at": null,
+ "url": "https://www.shadertoy.com/view/XX2XDd"
+}

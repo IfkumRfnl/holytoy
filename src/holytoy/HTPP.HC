@@ -171,7 +171,15 @@ U0 HtPpSubstBody(CHtPp *pp,CHtPpBuf *out,CHtMacro *mac,
       hit=FALSE;
       for (k=0;k<mac->n_params;k++)
         if (!StrCmp(mac->param+k*HTPP_NAME_LEN,name)) {
-          if (k<n_args) HtPpBufPut(out,arg[k]);
+          //Space-wrap the substituted argument so adjacent operator
+          //characters never paste into new tokens ("-x" with arg "-1"
+          //must not become "--1"). Whitespace is token-safe: there is
+          //no stringize/paste support.
+          if (k<n_args) {
+            HtPpBufPutCh(out,' ');
+            HtPpBufPut(out,arg[k]);
+            HtPpBufPutCh(out,' ');
+          }
           hit=TRUE;
           break;
         }
@@ -267,9 +275,13 @@ U0 HtPpExpandInto(CHtPp *pp,CHtPpBuf *out,U8 *text,I64 depth)
       while (HtPpIsIdent(*s)) s++;
       name[i]=0;
       m=HtPpFind(pp,name);
-      if (m>=0)
+      if (m>=0) {
+        //Space-wrap the whole expansion: "#define D -0.136" used as
+        //"-D" must expand to "- -0.136", not the decrement "--0.136".
+        HtPpBufPutCh(out,' ');
         HtPpExpandMacro(pp,out,&pp->macro[m],&s,depth);
-      else
+        HtPpBufPutCh(out,' ');
+      } else
         HtPpBufPut(out,name);
     } else if ('0'<=*s<='9' ||
                (*s=='.' && '0'<=s[1]<='9')) {

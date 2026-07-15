@@ -1,0 +1,81 @@
+{
+ "author": "beans_please",
+ "author_handle": "beans_please",
+ "author_profile_url": "https://www.shadertoy.com/user/beans_please",
+ "coverage": {
+  "primary_stratum": "single_texture_channels",
+  "selection_reason": "Poisson-disk style sampling over a still texture.",
+  "unusual_features": [],
+  "visual_domain": "2d"
+ },
+ "license": {
+  "evidence": "Repository root LICENSE is AGPL-3.0 and README.md states this is a personal backup of the author's Shadertoy projects.",
+  "evidence_location": "LICENSE (repository root); README.md:1",
+  "evidence_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/LICENSE",
+  "identifier": "AGPL-3.0-only",
+  "license_url": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "name": "GNU Affero General Public License v3.0",
+  "provenance_evidence_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/README.md",
+  "text": null
+ },
+ "passes": [
+  {
+   "ascii_only": true,
+   "bytes": 1339,
+   "inputs": [
+    {
+     "channel": 0,
+     "evidence": "renderpass inputs in the pinned shaders_all.json snapshot",
+     "filepath": "/media/a/52d2a8f514c4fd2d9866587f4d7b2a5bfa1a11a0e772077d7682deb8b3b517e5.jpg",
+     "sampler": {
+      "filter": "linear",
+      "internal": "byte",
+      "srgb": "false",
+      "vflip": "true",
+      "wrap": "repeat"
+     },
+     "type": "texture"
+    }
+   ],
+   "kind": "image",
+   "name": "Image",
+   "ordinal": 0,
+   "outputs": [
+    {
+     "channel": 0,
+     "id": "4dfGRr"
+    }
+   ],
+   "path": "shaders/wcKSRw/image.glsl",
+   "sha256": "7961c94d03308d6a81bc1caadfa024508f779475fec0712589bd322417143b62",
+   "source_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/shaders_all.json"
+  }
+ ],
+ "provenance": {
+  "source_commit": "6baf7720d28d4440e8ebdabf9b971c34a7356545",
+  "source_preservation": "Each source pass is the exact JSON code string from the pinned author snapshot, UTF-8 encoded without normalization or edits.",
+  "source_repository": "https://github.com/bean-mhm/shaders",
+  "source_snapshot": "shaders_all.json",
+  "source_snapshot_url": "https://raw.githubusercontent.com/bean-mhm/shaders/6baf7720d28d4440e8ebdabf9b971c34a7356545/shaders_all.json"
+ },
+ "published_at": null,
+ "retrieved_at": "2026-07-15T10:57:00Z",
+ "schema_version": 1,
+ "shader_id": "wcKSRw",
+ "source_metadata": {
+  "likes": 0,
+  "shadertoy_info_date_unix": "0",
+  "shadertoy_info_date_utc": "1970-01-01T00:00:00Z",
+  "snapshot_generated_at": "2025-09-25T14:01:38.135Z",
+  "timestamp_semantics": "The snapshot exposes info.date but does not identify it as publication versus update time.",
+  "views": 0
+ },
+ "tags": [
+  "filtering",
+  "poisson",
+  "disk"
+ ],
+ "title": "Fork Poisson di beans_plea 758",
+ "updated_at": null,
+ "url": "https://www.shadertoy.com/view/wcKSRw"
+}

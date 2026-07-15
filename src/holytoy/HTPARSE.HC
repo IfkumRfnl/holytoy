@@ -724,7 +724,7 @@ I64 HtParseStructDef(CHtProgram *p)
 
 I64 HtParseParams(CHtProgram *p)
 {//'(' eaten; PARAM chain or -1. Accepts 'void' and unnamed parameters.
-  I64 first=-1,last=-1,n,flags,base,name;
+  I64 first=-1,last=-1,n,flags,base,name,arr_pre;
   if (HtTake(p,")")) return -1;
   if (HtTokEq(p->lex,p->pos,"void") && HtTokEq(p->lex,p->pos+1,")")) {
     p->pos+=2;
@@ -749,6 +749,8 @@ I64 HtParseParams(CHtProgram *p)
       return -1;
     }
     p->pos++;
+    //type-prefix array (`vec2[N] v`), same encoding as declarations
+    arr_pre=HtParseTypeArraySuffix(p);
     name=-1;
     if (p->lex->tok[p->pos].kind==HT_TOK_IDENT &&
         HtTypeAt(p,p->pos)==HTT_NONE) {
@@ -762,6 +764,12 @@ I64 HtParseParams(CHtProgram *p)
     if (HtTake(p,"[")) {
       p->node[n].b=HtParseAssign(p);
       if (!HtNeed(p,"]")) return -1;
+    } else if (arr_pre!=-1) {
+      if (arr_pre==-2) {
+        HtParseError(p,p->pos,"array parameter needs a size");
+        return -1;
+      }
+      p->node[n].b=arr_pre;
     }
     if (first<0) first=n;
     else p->node[last].next=n;

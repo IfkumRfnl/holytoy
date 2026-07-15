@@ -1,0 +1,62 @@
+{
+ "author": "Reinder Nijhoff",
+ "author_handle": "reinder",
+ "author_profile_url": "https://www.shadertoy.com/user/reinder",
+ "coverage": {
+  "primary_stratum": "single_texture_channels",
+  "selection_reason": "Voxel world sampling two still-texture channels.",
+  "unusual_features": [],
+  "visual_domain": "3d"
+ },
+ "license": {
+  "evidence": "[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.](https://creativecommons.org/licenses/by-nc-sa/4.0/)",
+  "evidence_location": "minecraft/README.md:30 (License section)",
+  "evidence_url": "https://github.com/reindernijhoff/shadertoy/blob/2def3ce132b4f5d9590e9eee0c17bd37a011835c/minecraft/README.md#license",
+  "identifier": "CC-BY-NC-SA-4.0",
+  "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+  "name": "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License",
+  "text": null
+ },
+ "passes": [
+  {
+   "ascii_only": false,
+   "bytes": 9819,
+   "inputs": [
+    {
+     "channel": 0,
+     "evidence": "minecraft/README.md Inputs section",
+     "filepath": "https://shadertoy.com/media/a/f735bee5b64ef98879dc618b016ecf7939a5756040c2cde21ccb15e69a6e1cfb.png",
+     "type": "texture"
+    },
+    {
+     "channel": 1,
+     "evidence": "minecraft/README.md Inputs section",
+     "filepath": "https://shadertoy.com/media/a/cd4c518bc6ef165c39d4405b347b51ba40f8d7a065ab0e8d2e4f422cbc1e8a43.jpg",
+     "type": "texture"
+    }
+   ],
+   "kind": "image",
+   "name": "Image",
+   "ordinal": 0,
+   "outputs": null,
+   "path": "shaders/4ds3WS/image.glsl",
+   "sha256": "1b67d8b5daf5b76f1ffc1c04cf0353aca6eac29f97470c993e29e53642961a4d",
+   "source_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/minecraft/Image.glsl"
+  }
+ ],
+ "provenance": {
+  "source_commit": "2def3ce132b4f5d9590e9eee0c17bd37a011835c",
+  "source_preservation": "Each GLSL pass was copied byte-for-byte from the pinned author-maintained backup.",
+  "source_readme": "minecraft/README.md",
+  "source_readme_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/minecraft/README.md",
+  "source_repository": "https://github.com/reindernijhoff/shadertoy"
+ },
+ "published_at": "2013-09-06",
+ "retrieved_at": "2026-07-15T10:57:00Z",
+ "schema_version": 1,
+ "shader_id": "4ds3WS",
+ "tags": null,
+ "title": "Minecraft",
+ "updated_at": null,
+ "url": "https://www.shadertoy.com/view/4ds3WS"
+}

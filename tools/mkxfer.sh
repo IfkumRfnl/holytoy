@@ -60,8 +60,30 @@ fi
 if [ -n "${HOLYTOY_GUI:-}" ]; then
     echo gui | mcopy -o - x:/GUI.TXT
 fi
+# Optional deterministic/adaptive render-scale selection for tests and runs.
+if [ -n "${HOLYTOY_SCALE:-}" ]; then
+    echo "$HOLYTOY_SCALE" | mcopy -o - x:/SCALE.TXT
+fi
+# Visual-oracle dump request: HT.HC writes V00A/V00B sample DATs after a
+# successful single-shader GLSL compile (plan 010).
+if [ -n "${HOLYTOY_VISDUMP:-}" ]; then
+    echo visdump | mcopy -o - x:/VISDUMP.TXT
+fi
 # Headless editor proof: HT.HC enters its interactive loop, while RUN.HC still
 # owns status extraction and reboot after the test sends ESC.
 if [ -n "${HOLYTOY_EDIT_TEST:-}" ]; then
     echo edit | mcopy -o - x:/EDIT.TXT
+fi
+
+# TempleOS FAT32 gotcha (found in plan 010, 64-entry corpus disk): the
+# guest's FAT32DirNew cannot extend a root directory whose mtools-written
+# chain ends in an EXACTLY-full cluster with no zeroed terminator entry --
+# the first in-guest FileWrite throws 'Drv' and wedges the drive. The
+# guest's own writes always pre-allocate a zeroed terminator cluster, so
+# only the host-written count matters. mformat creates no volume label and
+# all names here are 8.3 (one entry each): keep the entry count off the
+# 16-per-512-byte-cluster boundary with a one-entry pad file.
+ENTRIES="$(mdir -b x:/ 2>/dev/null | wc -l)"
+if [ $((ENTRIES % 16)) -eq 0 ]; then
+    echo pad | mcopy -o - x:/PAD.TXT
 fi

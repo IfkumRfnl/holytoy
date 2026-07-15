@@ -85,7 +85,7 @@ make run SRC=src/gradient.HC     # one cycle (~20 s): inject, boot, screenshot, 
 make run SRC=tests/glsl/foo.glsl # .glsl: compiled in-guest, runs inside HolyToy
 make watch SRC=...               # re-run on every save
 make gui [SRC=...]               # visible QEMU window (WSLg); guest stays up, no auto-reboot
-make test                        # the ten proofs (must stay green)
+make test                        # the thirteen proofs (must stay green)
 make fetch-iso                   # (re)download images/TempleOS.ISO
 make clean                       # remove run artifacts; never touches the golden image
 ```
@@ -167,11 +167,33 @@ The app shader ABI returns unclamped RGBA through `CHtFragColor`. The
 renderer owns clamping, bottom-left pixel-center coordinates, palette
 quantization, and deterministic 4x4 Bayer dithering.
 
+Render scale: the viewport shades one sample per `ht_scale x ht_scale`
+block (1/2/4/8/16). In auto mode a controller starts every newly installed
+shader at 1:16 and refines/coarsens from measured shade ms; `iResolution`
+and `fragCoord` math are unchanged, so scale never alters language
+semantics. Export `HOLYTOY_SCALE=4` (or `1|2|8|16|auto`) to pin it via
+`E:/SCALE.TXT` — the proof suite pins 4 so frame hashes stay deterministic.
+The pane header shows the live `1:N`.
+
 Corpus measurement: `tools/corpus_run.sh` preps guest-safe copies of
-`corpus/shadertoy/v1` (tools/glsl_prep.py), compiles all 20 shaders in one
-VM boot (HT.HC corpus mode, `HT CORPUS` markers), and prints the staged
-compile/install/exec table via tools/corpus_report.py. The older
-`python3 tools/corpus_compat.py` is only the static host-side smoke check.
+`corpus/shadertoy/v2` by default (`CORPUS_DIR=corpus/shadertoy/v1` for the
+frozen v1; tools/glsl_prep.py emits `Sxx <id> <stratum>` lines), compiles
+every shader in one VM boot (HT.HC corpus mode, `HT CORPUS` markers), and
+prints the staged compile/install/exec table via tools/corpus_report.py,
+grouped per stratum. v2 has two strata: `single_no_channels` (pure Image
+pass) and `single_texture_channels` (static texture inputs, expected to
+fail compile until a texture runtime lands — the failures are the
+measurement). The older `python3 tools/corpus_compat.py` is only the
+static host-side smoke check.
+
+Visual oracle: after the staged table, corpus_run.sh extracts the guest's
+80x36 pre-quantization sample dumps (`V<nn>[AB].DAT`, two pinned uniform
+states) and tools/visual_compare.py scores them against the committed
+references in `tests/corpus-visual/refs-<version>` (tolerance 16/255 on
+>=90% of samples, both states; the per-shader numbers are the deliverable).
+`HOLYTOY_VISDUMP=1 make run SRC=foo.glsl` dumps `V00[AB].DAT` for a single
+shader. References regenerate ONLY via `tools/glsl_ref.py` (moderngl +
+llvmpipe; GL is never needed to run tests or corpus batches).
 
 The ABI carries mouse positions in raw viewport pixels with Y down. Emitted
 GLSL maps these to Shadertoy `iMouse`: xy is the current Y-up position; zw is

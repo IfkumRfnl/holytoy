@@ -981,9 +981,13 @@ I64 HtSemaCall(CHtSema *se,I64 i)
         }
         total+=m;
       }
+      //GLSL drops extra trailing components of the LAST argument (the
+      //same rule that lets vec3(v4) truncate); only an argument that
+      //contributes nothing is an error. m holds the last argument's
+      //component count after the loop; the emitter already stops copying
+      //at the destination size (HtEmCtor's c<cnt bound).
       if (!(n_args==1 && total==1) &&		//splat
-          !(n_args==1 && total>=need) &&	//truncating single vector
-          total!=need) {
+          (total<need || total-m>=need)) {
         HtSemaError(p,n->tok,"vector constructor component count");
         return HTT_NONE;
       }

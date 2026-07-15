@@ -1,0 +1,62 @@
+{
+ "author": "Reinder Nijhoff",
+ "author_handle": "reinder",
+ "author_profile_url": "https://www.shadertoy.com/user/reinder",
+ "coverage": {
+  "primary_stratum": "single_texture_channels",
+  "selection_reason": "Terrain raymarcher over two still-texture channels.",
+  "unusual_features": [],
+  "visual_domain": "3d"
+ },
+ "license": {
+  "evidence": "[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.](https://creativecommons.org/licenses/by-nc-sa/4.0/)",
+  "evidence_location": "abandoned-base-on-mars/README.md:27 (License section)",
+  "evidence_url": "https://github.com/reindernijhoff/shadertoy/blob/2def3ce132b4f5d9590e9eee0c17bd37a011835c/abandoned-base-on-mars/README.md#license",
+  "identifier": "CC-BY-NC-SA-4.0",
+  "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+  "name": "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License",
+  "text": null
+ },
+ "passes": [
+  {
+   "ascii_only": false,
+   "bytes": 18579,
+   "inputs": [
+    {
+     "channel": 0,
+     "evidence": "abandoned-base-on-mars/README.md Inputs section",
+     "filepath": "https://shadertoy.com/media/a/cd4c518bc6ef165c39d4405b347b51ba40f8d7a065ab0e8d2e4f422cbc1e8a43.jpg",
+     "type": "texture"
+    },
+    {
+     "channel": 1,
+     "evidence": "abandoned-base-on-mars/README.md Inputs section",
+     "filepath": "https://shadertoy.com/media/a/0c7bf5fe9462d5bffbd11126e82908e39be3ce56220d900f633d58fb432e56f5.png",
+     "type": "texture"
+    }
+   ],
+   "kind": "image",
+   "name": "Image",
+   "ordinal": 0,
+   "outputs": null,
+   "path": "shaders/4sfGR7/image.glsl",
+   "sha256": "9102dc159101376735d3d5f78d38360f054a5a58e52f47236d64ebd19bc70c8d",
+   "source_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/abandoned-base-on-mars/Image.glsl"
+  }
+ ],
+ "provenance": {
+  "source_commit": "2def3ce132b4f5d9590e9eee0c17bd37a011835c",
+  "source_preservation": "Each GLSL pass was copied byte-for-byte from the pinned author-maintained backup.",
+  "source_readme": "abandoned-base-on-mars/README.md",
+  "source_readme_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/abandoned-base-on-mars/README.md",
+  "source_repository": "https://github.com/reindernijhoff/shadertoy"
+ },
+ "published_at": "2013-04-05",
+ "retrieved_at": "2026-07-15T10:57:00Z",
+ "schema_version": 1,
+ "shader_id": "4sfGR7",
+ "tags": null,
+ "title": "Abandoned base on Mars",
+ "updated_at": null,
+ "url": "https://www.shadertoy.com/view/4sfGR7"
+}

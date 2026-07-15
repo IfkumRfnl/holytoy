@@ -1,0 +1,49 @@
+{
+ "author": "Reinder Nijhoff",
+ "author_handle": "reinder",
+ "author_profile_url": "https://www.shadertoy.com/user/reinder",
+ "coverage": {
+  "primary_stratum": "single_no_channels",
+  "selection_reason": "Path-traced spheres with motion blur.",
+  "unusual_features": [],
+  "visual_domain": "3d"
+ },
+ "license": {
+  "evidence": "[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.](https://creativecommons.org/licenses/by-nc-sa/4.0/)",
+  "evidence_location": "more-spheres/README.md:23 (License section)",
+  "evidence_url": "https://github.com/reindernijhoff/shadertoy/blob/2def3ce132b4f5d9590e9eee0c17bd37a011835c/more-spheres/README.md#license",
+  "identifier": "CC-BY-NC-SA-4.0",
+  "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+  "name": "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License",
+  "text": null
+ },
+ "passes": [
+  {
+   "ascii_only": false,
+   "bytes": 6490,
+   "inputs": [],
+   "kind": "image",
+   "name": "Image",
+   "ordinal": 0,
+   "outputs": null,
+   "path": "shaders/lsX3DH/image.glsl",
+   "sha256": "b8ad4d791e46c8391834fcb0b2a3e0c3be5c5ab6ec5b48413ed13ce44b4f1aa2",
+   "source_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/more-spheres/Image.glsl"
+  }
+ ],
+ "provenance": {
+  "source_commit": "2def3ce132b4f5d9590e9eee0c17bd37a011835c",
+  "source_preservation": "Each GLSL pass was copied byte-for-byte from the pinned author-maintained backup.",
+  "source_readme": "more-spheres/README.md",
+  "source_readme_url": "https://raw.githubusercontent.com/reindernijhoff/shadertoy/2def3ce132b4f5d9590e9eee0c17bd37a011835c/more-spheres/README.md",
+  "source_repository": "https://github.com/reindernijhoff/shadertoy"
+ },
+ "published_at": "2013-05-15",
+ "retrieved_at": "2026-07-15T10:57:00Z",
+ "schema_version": 1,
+ "shader_id": "lsX3DH",
+ "tags": null,
+ "title": "More spheres",
+ "updated_at": null,
+ "url": "https://www.shadertoy.com/view/lsX3DH"
+}

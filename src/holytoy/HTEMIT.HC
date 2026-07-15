@@ -1460,8 +1460,20 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
     if (op[0]=='-') delta="1";
     HtEmLval(e,n->a,&lv);
     k=HtTKind(lv.type);
-    if (n->kind==HT_AST_POSTINC)
-      HtLvalToVal(e,&lv,out);
+    if (n->kind==HT_AST_POSTINC) {
+      //Post-inc/dec must yield the ORIGINAL value. HtLvalToVal aliases a
+      //plain lvalue by name, so the update lines below would leak the
+      //NEW value into the result (found as corpus v2 mtlfRs quick_sort
+      //GP fault: pairs[rw++] indexed one slot ahead). Snapshot into a
+      //fresh temp instead.
+      HtNewTmp(e,lv.type,out);
+      cnt=HtCompCount(k);
+      for (c=0;c<cnt;c++) {
+        HtValComp(e,out,c,x);
+        HtLvalComp(e,&lv,c,d);
+        HtOutF(e,"%s=(%s);\n",x,d);
+      }
+    }
     cnt=HtCompCount(k);
     for (c=0;c<cnt;c++) {
       HtLvalComp(e,&lv,c,d);
