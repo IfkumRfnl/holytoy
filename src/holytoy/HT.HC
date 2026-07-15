@@ -529,6 +529,7 @@ U0 HtCorpusRun()
       "HT CORPUS %s read ERR missing\n",id;
       goto corpus_next;
     }
+    "HT CORPUS %s read OK %d\n",id,sz;
     if (!HtCompileGlsl(src,&r)) {
       "HT CORPUS %s compile ERR %s\n",id,r.error;
       Free(src);
