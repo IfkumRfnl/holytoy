@@ -314,6 +314,65 @@ U0 HtDrawIt(CTask *task,CDC *dc)
   HtDrawPane(task,dc);
 }
 
+I64 HtDump8(F64 v)
+{//Clamp to [0,1] then round-half-up to a byte (ToI64 truncates); NaN
+ //fails both comparisons and clamps to 0 like the renderer's clamp.
+  if (!(v>0.0)) return 0;
+  if (v>=1.0) return 255;
+  return ToI64(v*255.0+0.5);
+}
+
+Bool HtVisualDump(U8 *path,F64 time,I64 frame)
+{//Visual-oracle sample dump (plan 010): pre-quantization clamped RGB on
+ //the fixed 80x36 block-center grid (fragCoord (bx*8+4, 288-(by*8+4)))
+ //at a pinned uniform state. Independent of ht_scale by construction;
+ //host side compares against committed GL reference DATs
+ //(tools/visual_compare.py vs tests/corpus-visual/).
+  CHtUniforms u;
+  CHtFragColor fc;
+  I64 bx,by,o=0;
+  F64 px,py;
+  U8 *buf=MAlloc(8640);
+  Bool ok=TRUE;
+  MemSet(&u,0,sizeof(CHtUniforms));
+  u.i_time=time;
+  u.res_x=640;
+  u.res_y=288;
+  u.click_x=-1;
+  u.click_y=-1;
+  u.date_year=2026;
+  u.date_mon=1;
+  u.date_day=1;
+  u.date_secs=0.0;
+  try {
+    //Generated shaders rebind uniform globals when u->i_frame changes
+    //(HTEMIT.HC stamp). Live frames may have left ANY stamp value, so
+    //prime with a sentinel no real frame uses, then the state's frame
+    //value forces exactly one deterministic rebind for all 2880 samples.
+    u.i_frame=-1;
+    fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
+    ht_fp(&u,4.0,284.0,&fc);
+    u.i_frame=frame;
+    for (by=0;by<36;by++)
+      for (bx=0;bx<80;bx++) {
+        px=bx*8+4;
+        py=288-(by*8+4);
+        fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
+        ht_fp(&u,px,py,&fc);
+        buf[o++]=HtDump8(fc.r);
+        buf[o++]=HtDump8(fc.g);
+        buf[o++]=HtDump8(fc.b);
+      }
+  } catch {
+    Fs->catch_except=TRUE;
+    ok=FALSE;
+  }
+  if (ok)
+    FileWrite(path,buf,8640);
+  Free(buf);
+  return ok;
+}
+
 Bool HtLoadGlsl()
 {//Read GLSL and run the same in-guest compile path used by the editor.
  //Return TRUE when a source file was present, even if compilation failed:
@@ -328,6 +387,19 @@ Bool HtLoadGlsl()
     "HT GUEST GLSL OK\n";
   else
     "HT GUEST GLSL FAIL\n";
+  if (ok && FileFind("E:/VISDUMP.TXT")) {
+    //Single-shader oracle dump. draw_it is already installed here;
+    //concurrent HtDrawIt frames would race the generated globals'
+    //frame-rebind cache, so park it and let any in-flight frame drain.
+    Fs->draw_it=NULL;
+    Sleep(250);
+    if (HtVisualDump("E:/V00A.DAT",0.5,15) &&
+        HtVisualDump("E:/V00B.DAT",8.0,240))
+      "HT VISUAL DUMP OK\n";
+    else
+      "HT VISUAL DUMP ERR\n";
+    Fs->draw_it=&HtDrawIt;
+  }
   Free(buf);
   return TRUE;
 }
@@ -423,12 +495,12 @@ U0 HtCorpusRun()
  //in one boot and print one marker line per stage; tools/corpus_report.py
  //turns guest.log into the staged compatibility table. No rendering here:
  //visual checks are separate single-shader runs.
-  U8 *man,*p,*src,name[16],id[16],path[24];
+  U8 *man,*p,*src,name[16],id[16],path[24],vpath[24];
   I64 sz,i,k,n=0,pass=0;
   F64 t0,px,py;
   CHtCompileResult r;
   CHtFragColor fc;
-  Bool ok;
+  Bool ok,vok;
   man=FileRead("E:/CORPUS.TXT",&sz);
   if (!man) {
     "HT CORPUS FAIL manifest\n";
@@ -444,8 +516,10 @@ U0 HtCorpusRun()
     name[i]=0;
     while (*p==' ') p++;
     i=0;
-    while (*p && *p!='\n' && *p!='\r' && i<15) id[i++]=*p++;
+    while (*p && *p!=' ' && *p!='\n' && *p!='\r' && i<15) id[i++]=*p++;
     id[i]=0;
+    //Optional third CORPUS.TXT field (stratum) is host-side metadata only.
+    while (*p && *p!='\n' && *p!='\r') p++;
     while (*p=='\n' || *p=='\r') p++;
     if (!*name || !*id) break;
     n++;
@@ -490,6 +564,15 @@ U0 HtCorpusRun()
     if (ok) {
       pass++;
       "HT CORPUS %s exec OK %dms\n",id,ToI64((tS-t0)*1000.0);
+      t0=tS;
+      StrPrint(vpath,"E:/V%02dA.DAT",n);
+      vok=HtVisualDump(vpath,0.5,15);
+      StrPrint(vpath,"E:/V%02dB.DAT",n);
+      vok=HtVisualDump(vpath,8.0,240) && vok;
+      if (vok)
+        "HT CORPUS %s visual OK %dms\n",id,ToI64((tS-t0)*1000.0);
+      else
+        "HT CORPUS %s visual ERR dump\n",id;
     } else
       "HT CORPUS %s exec ERR nonfinite\n",id;
     HtCompileResultDel(&r);

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# holytoy proof suite. Twelve round-trips through the real VM:
+# holytoy proof suite. Thirteen round-trips through the real VM:
 #   1. smoke        guest marker round-trip
 #   2. gradient     screenshot dimensions and colors
 #   3. error        guest compiler failure surfaces as exit 1
@@ -12,6 +12,7 @@
 #  10. guest-glsl   raw GLSL is compiled in-guest and rendered through HTRENDER
 #  11. circle       declarations/vectors/builtins compile and render geometry
 #  12. editor       native in-guest edit auto-compiles and changes the viewport
+#  13. oracle       guest visual sample dump matches the committed reference
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -378,6 +379,26 @@ if [ "$EDITOR_READY" = 1 ] && [ "$EDITOR_CHANGED" = 1 ] && [ "$RC" = 0 ] &&
     ok "editor: native edit auto-compiled and changed viewport $BEFORE_HASH -> $AFTER_HASH"
 else
     bad "editor: ready=$EDITOR_READY changed=$EDITOR_CHANGED rc=$RC hash='$BEFORE_HASH'/'$AFTER_HASH' (run $RD)"
+fi
+
+# 13. oracle: the guest's visual sample dump matches the committed reference
+# DATs within the plan-010 tolerance (tools/visual_compare.py exit 0).
+RD="$(new_run_path oracle)"
+if HOLYTOY_VISDUMP=1 RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl; then
+    ORACLE_DIR="$RD/visual"
+    mkdir -p "$ORACLE_DIR"
+    MTOOLSRC="$RD/mtools.conf" mcopy -n x:/V00A.DAT "$ORACLE_DIR/gradient-A.DAT" 2>/dev/null
+    MTOOLSRC="$RD/mtools.conf" mcopy -n x:/V00B.DAT "$ORACLE_DIR/gradient-B.DAT" 2>/dev/null
+    if grep -q "HT VISUAL DUMP OK" "$RD/guest.log" &&
+       python3 tools/visual_compare.py --dumps "$ORACLE_DIR" \
+           --refs tests/corpus-visual/refs-fixtures; then
+        ok "oracle: guest visual dump within tolerance of committed reference"
+    else
+        bad "oracle: dump missing or out of tolerance (run $RD)"
+    fi
+else
+    RC=$?
+    bad "oracle: run.sh exited $RC (run $RD)"
 fi
 
 echo "-- $PASS passed, $FAIL failed --"
