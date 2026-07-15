@@ -25,7 +25,9 @@
 - **Depends on**: plans/009-glsl-e2e-corpus-v1.md (DONE at `3e75c6a`)
 - **Category**: direction
 - **Planned at**: commit `a214703`, 2026-07-15
-- **Execution status**: IN PROGRESS (branch `plan-010-scale-oracle-corpus2`)
+- **Execution status**: DONE (2026-07-15, branch `plan-010-scale-oracle-corpus2`;
+  all done criteria green with evidence below; stratum A 39/40 shortfall
+  recorded per the take-what-exists rule)
 
 ## Why this matters
 
@@ -640,24 +642,32 @@ v1 run still 20/20/20; final v2 tables recorded.
 Machine-checkable; ALL must hold, with evidence (run dirs, tables) recorded
 in this file:
 
-- [ ] `make test` ends `-- 13 passed, 0 failed --` on the final tree.
-- [ ] Adaptive scale: prepped `4tsGD7` completes `make run` (default auto,
-      stock `RUN_TIMEOUT=90`) with exit 0 and >=3 distinct trailing frames;
-      settled `1:N` recorded. `HT SCALE OK` present in the proof-6 run log.
-- [ ] `git diff a214703..HEAD -- corpus/shadertoy/v1/` is empty.
-- [ ] Visual oracle: `tools/corpus_run.sh` on v1 prints the per-shader
-      visual table vs `tests/corpus-visual/refs-v1`; K/20 recorded with
-      per-shader meanerr/pct; every failing shader has a one-line diagnosis
-      (recorded deviation vs bug). 4dSBz3, 4tsGD7, Wtj3Wc pass. (If Step B3
-      hit its escape hatch: this criterion is BLOCKED with both routes'
-      errors recorded instead — not silently dropped.)
-- [ ] Corpus v2 exists, `validate.py` exits 0, >=40 stratum-A and >=8
-      stratum-B shaders; staged + visual tables for all of v2 recorded;
-      stratum A exec >= 90% (or the STOP report from C4); stratum B compile
-      failures all carry texture diagnostics.
-- [ ] v1 backward-compat run (`CORPUS_DIR=corpus/shadertoy/v1`) still
-      20/20 compile / 20/20 install / 20/20 exec.
-- [ ] AGENTS.md documents `HOLYTOY_SCALE`, `HOLYTOY_VISDUMP`, `CORPUS_DIR`;
+- [x] `make test` ends `-- 13 passed, 0 failed --` on the final tree
+      (test-20260715-1209xx..1212xx-61392-* runs; dither/editor hashes
+      unchanged at 6d5c42e03ecb2f002f8ba8316c4dfb94 under the suite pin).
+- [x] Adaptive scale: prepped `4tsGD7` completes `make run` (default auto,
+      stock `RUN_TIMEOUT=90`) with exit 0 and 10 distinct trailing frames;
+      settled at **1:16, 44 ms/frame** (`run-20260715-104043-71rkcP`).
+      `HT SCALE OK` in the proof-6 run log
+      (`test-20260715-121034-61392-holytoy`).
+- [x] `git diff a214703..HEAD -- corpus/shadertoy/v1/` is empty.
+- [x] Visual oracle: v1 run prints the visual table vs refs-v1; **17/20**
+      within tolerance with per-shader meanerr/maxerr/pct recorded above;
+      the 3 failures each have a one-line diagnosis (all trace to the
+      plan-009 recorded LUT-sin/F64 deviations via the fract(sin) hash
+      idiom). 4dSBz3, 4tsGD7, Wtj3Wc pass. GL route: moderngl +
+      nix-built mesa 26.1.4 llvmpipe over EGL (recorded above).
+- [x] Corpus v2 exists, `validate.py` exits 0; stratum A is **39** (one
+      short of the 40 target — the pinned snapshots yield only 19
+      qualifying new candidates under the unchanged gates; shortfall
+      recorded in v2 README per this plan's take-what-exists rule) and
+      stratum B is 12 (>=8); staged + visual tables recorded above;
+      **stratum A exec 100% >= 90%**; all 12 stratum-B compile failures
+      carry missing-texture/derivative diagnostics (verified per line).
+- [x] v1 backward-compat run (`CORPUS_DIR=corpus/shadertoy/v1`,
+      `run-20260715-120916-xg8Gi2`) still 20/20 compile / 20/20 install /
+      20/20 exec.
+- [x] AGENTS.md documents `HOLYTOY_SCALE`, `HOLYTOY_VISDUMP`, `CORPUS_DIR`;
       `plans/README.md` row updated; README.md untouched.
 
 ## Execution evidence (recorded 2026-07-15, branch plan-010-scale-oracle-corpus2)
@@ -758,6 +768,125 @@ in this file:
 - refs-v2: `glsl_ref.py --only-stratum single_no_channels` wrote 78 DATs
   (39/39 shaders) via the same recorded GL route.
 - `git status --porcelain corpus/shadertoy/v1` → empty throughout.
+
+### Stage C — batch-killing fault + C4 cluster fixes
+
+The first three full-v2 batch attempts (`run-20260715-112317-dhMaLx`,
+`-113958-ZK7iPh`, `-114550-ayYLBW`) all died identically: after ~44
+shaders, `Fault:0x0D General Protection` at `uf554_quick_sort+0x0088`
+(`FLD U64 [RDI*8]`, RDI=0x4031000000000000 = F64 bits of 17.0 used as an
+array index) dropped the guest into the TempleOS debugger — a hard fault
+is not catchable by the exec try/catch, so the batch loop died. Bisection
+probes (probeA/B/C: subsets all clean, `run-20260715-113447/113519/113653`)
+plus quantitative single-shader fixtures (q3/q4 with V00A dumps) isolated
+it to **postfix ++/-- yielding the UPDATED value instead of the original**
+(HTEMIT's HtLvalToVal aliases plain lvalues by name), so mtlfRs's
+`pairs[rw_offset++]` wrote one slot ahead and `pairs[--rw_offset]` read
+uninitialized memory whose float bits became an index. One source-backed
+fix (snapshot the old value into a fresh temp) resolved it — fixture q4
+now reads exactly 128/77/0 — within the guest-fault guardrail's budget.
+
+Along the way, an unrelated infra bug was found and fixed: TempleOS's
+FAT32DirNew faults (`Drv` throw, drive wedged) when the mtools-written
+root directory ends in an exactly-full 512-byte cluster with no zeroed
+terminator (the 51-shader disk hit exactly 64 entries); mkxfer.sh now
+pads the entry count off the 16-per-cluster boundary
+(`run-20260715-112248-81PwMT` re-ran the same layout green).
+
+C4 cluster fixes (3 batches, each probe-verified in-guest before the full
+re-run):
+
+1. **vector constructor excess trailing components** (3 shaders: lds3D8,
+   lsX3DH, lsX3WH) — sema now follows GLSL's drop-extra-components rule
+   for the last argument; the emitter already truncated.
+2. **macro-expansion token pasting** (lds3D8) — `#define LENSDISTANCE
+   -0.136` used as `-LENSDISTANCE` lexed as `--`; HTPP now space-wraps
+   expansions and substituted arguments.
+3. **type-prefix array parameters** (clXBW4) — `in vec2[N] v` accepted
+   with the declaration encoding.
+
+### Stage C — final v2 measurement (`run-20260715-120736-v1Q6Pk`, guest DONE 39/51)
+
+Staged table (per stratum):
+
+| stage | overall | single_no_channels | single_texture_channels |
+|---|---|---|---|
+| compile | 39/51 (76.5%) | **39/39 (100%)** | 0/12 (expected) |
+| install | 39/51 (76.5%) | **39/39 (100%)** | 0/12 |
+| exec    | 39/51 (76.5%) | **39/39 (100%)** | 0/12 |
+
+Stratum A exec = 100% >= 90% target. All 12 stratum-B compile failures
+carry missing-texture-support diagnostics, verified line-by-line: ten hit
+`texture`/`texelFetch`/`textureLod`/`iChannel*` references ("unknown
+name": 3clXzN 5:27, 4ds3WS 34:24, 4sfGR7 60:21, 4sl3z4 59:24, X3KcDh
+5:20, Xls3WM 15:30, XsfGzM 91:18, lXBXWz 19:13, mtScWm 11:26, wfXBRH
+6:29), MdXGW2 373:15 rejects a `sampler2D` function parameter, and
+wcKSRw 29:26 fails first on `fwidth` ("derivatives not supported", also
+an honest unsupported feature; its texture reads follow later in the
+file). No stratum-B shader compiles.
+
+Visual table (stratum A, vs refs-v2): 28/39 within tolerance.
+
+| shader | meanA | maxA | pctA | meanB | maxB | pctB | visual |
+|---|---|---|---|---|---|---|---|
+| 3dfGR2 | 5.16 | 159 | 90.3 | 4.91 | 205 | 91.4 | OK |
+| 4cVGRD | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| 4dSBz3 | 0.00 | 1 | 100.0 | 0.00 | 1 | 100.0 | OK |
+| 4lfGWr | 46.46 | 255 | 43.4 | 1.33 | 255 | 99.5 | FAIL |
+| 4sfGWX | 26.69 | 231 | 68.8 | 26.02 | 247 | 77.0 | FAIL |
+| 4tl3z4 | 7.80 | 184 | 87.5 | 22.90 | 255 | 82.1 | FAIL |
+| 4tsGD7 | 0.00 | 1 | 100.0 | 0.00 | 1 | 100.0 | OK |
+| DdcyRf | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| DsGBDy | 0.00 | 1 | 100.0 | 0.00 | 1 | 100.0 | OK |
+| DtSfzR | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| Mdf3Dr | 0.42 | 109 | 99.8 | 3.29 | 235 | 98.2 | OK |
+| Mdf3zM | 0.01 | 6 | 100.0 | 0.00 | 1 | 100.0 | OK |
+| MdjXDV | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| MdlGz4 | 24.57 | 171 | 43.3 | 24.24 | 181 | 51.8 | FAIL |
+| MfjBDV | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| MlGcRz | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| MtfBDN | 0.99 | 1 | 100.0 | 0.01 | 1 | 100.0 | OK |
+| MtfGR4 | 18.53 | 180 | 73.7 | 17.65 | 185 | 74.7 | FAIL |
+| MtlGWM | 1.14 | 6 | 100.0 | 1.14 | 6 | 100.0 | OK |
+| Wtj3Wc | 0.69 | 104 | 99.2 | 0.13 | 16 | 100.0 | OK |
+| XX2XDd | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| XXlBDH | 0.00 | 0 | 100.0 | 0.00 | 1 | 100.0 | OK |
+| XdcGzr | 4.11 | 255 | 96.9 | 9.97 | 254 | 92.3 | OK |
+| XdsGWH | 39.77 | 166 | 25.5 | 39.77 | 166 | 25.5 | FAIL |
+| Xlt3Dn | 17.38 | 228 | 70.9 | 15.94 | 246 | 73.3 | FAIL |
+| Xtf3zn | 0.40 | 178 | 99.4 | 0.27 | 102 | 99.7 | OK |
+| clXBW4 | 0.00 | 1 | 100.0 | 0.00 | 1 | 100.0 | OK |
+| l3GcWh | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| lXGyDR | 0.01 | 1 | 100.0 | 0.01 | 1 | 100.0 | OK |
+| ldjBW1 | 5.20 | 218 | 93.6 | 5.71 | 207 | 92.6 | OK |
+| lds3D8 | 46.95 | 255 | 52.5 | 41.70 | 255 | 48.8 | FAIL |
+| llcyD2 | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| lsB3zD | 3.15 | 32 | 99.2 | 3.02 | 36 | 99.5 | OK |
+| lsX3DH | 38.32 | 237 | 50.5 | 44.71 | 247 | 39.4 | FAIL |
+| lsX3WH | 55.32 | 255 | 48.0 | 47.91 | 254 | 38.9 | FAIL |
+| md2yWh | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| mtlfRs | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+| tlSSDV | 9.67 | 254 | 83.1 | 13.84 | 255 | 74.6 | FAIL |
+| wdyBRV | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+
+All 11 visual failures (3 carried from v1 + 8 new) contain the
+`fract(sin(x)*<large const>)` white-noise hash idiom (grep counts 4-14
+occurrences each: MdlGz4 5, MtfGR4 12, XdsGWH 4, Xlt3Dn 5, lds3D8 13,
+lsX3DH 14, lsX3WH 13, tlSSDV 4) — the plan-009 recorded deviations
+(LUT sin abs err <= 2e-4, F64-not-F32 floats) are amplified by ~5e4 and
+decorrelate the hash/RNG streams, so Monte-Carlo path tracers and
+noise-textured scenes diverge per-sample from the F32 GL reference.
+Recorded deviations, not new compiler bugs; F32 semantics + exact sin
+are the standing follow-up (plans/009 deviations list).
+
+### Backward compat + final suite
+
+- `CORPUS_DIR=corpus/shadertoy/v1 tools/corpus_run.sh` on the final tree
+  (`run-20260715-120916-xg8Gi2`): staged 20/20/20 per stage, visual 17/20
+  with per-shader numbers byte-identical to the pre-C4 run — the compiler
+  fixes changed nothing for v1 (v1 never consumes postfix values in
+  expressions).
+- `python3 corpus/shadertoy/v2/validate.py` → exit 0 on the final tree.
 
 ## STOP conditions
 
