@@ -1,5 +1,5 @@
 //HolyToy skeleton (plan 002): editable code pane + live animating viewport.
-//The runner owns the pixels: draw_it iterates the viewport at HT_SCALE
+//The runner owns the pixels: draw_it iterates the viewport at ht_scale
 //block granularity, calls MainImage through ht_fp for one sample per
 //block, and pokes dc->body directly (src/plasma.HC idiom - absolute
 //screen coords, stride=width_internal, no clipping).  The code pane is
@@ -18,7 +18,6 @@
 #include "E:/HTCOMP.HC"
 
 #define HT_VIEW_H	288	//viewport: full width x 288 window pixels (~60%)
-#define HT_SCALE	4	//shade once per 4x4 block (VISION.md render scale)
 #define HT_PANE_ROW	36	//first code-pane text row (window row, 8px cells)
 #define HT_SRC_ROWS	20	//source lines shown in the pane
 #define HT_STATUS_ROW	58	//status/error line (last window row)
@@ -49,6 +48,9 @@ I64 ht_edit_top,ht_edit_left;	//visible source origin in lines/columns
 F64 ht_t0;			//shading-loop timing start (per frame)
 I64 ht_shade_ms;		//last frame's shading time, whole ms
 Bool ht_mouse_lb_prev;		//rising-edge state for iMouse click position
+I64 ht_scale=16;		//runtime shade-block size: 1,2,4,8,16
+I64 ht_scale_lock=0;		//0 = adaptive; otherwise pinned by SCALE.TXT
+I64 ht_scale_slow=0,ht_scale_fast=0;	//controller consecutive frames
 
 U8 *ht_glsl1=
 "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
@@ -64,6 +66,23 @@ U8 *ht_glsl_bad=
 "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
 "  fragColor = vec4(unknownName);\n"
 "}\n";
+
+U8 *ht_glsl_slow=
+"// Deliberately expensive adaptive-scale fixture.\n"
+"void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+"  float v = fragCoord.x / iResolution.x;\n"
+"  for (int i = 0; i < 40000; i++)\n"
+"    v = fract(sin(v * 12.9898 + float(i)) * 43758.5453);\n"
+"  fragColor = vec4(v);\n"
+"}\n";
+
+U0 HtScaleReset()
+{//A newly installed shader starts coarse; history never crosses shaders.
+  ht_scale_slow=0;
+  ht_scale_fast=0;
+  if (!ht_scale_lock)
+    ht_scale=16;
+}
 
 U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)
 {//Built-in last-good shader: plasma bands while GLSL is being edited.
@@ -96,7 +115,8 @@ U0 HtDrawPane(CTask *task,CDC *dc)
     MemSet(&dc->body[sy*stride+task->pix_left],BLACK,task->pix_width);
   dc->color=LTGRAY;
   GrPrint(dc,0,HT_PANE_ROW*FONT_HEIGHT,
-          " HolyToy %3dms  F5 compile  F1-F2 samples  ESC exit",ht_shade_ms);
+          " HolyToy %3dms 1:%-2d F5 compile  F1-F2 samples  ESC exit",
+          ht_shade_ms,ht_scale);
   while (*p && line_num<ht_edit_top) {
     while (*p && *p!='\n') p++;
     if (*p=='\n') p++;
@@ -189,9 +209,11 @@ Bool HtCompileAndSwapGlsl(U8 *glsl)
   ok=HtInstallHoly(result.holy);
   holy_n=StrLen(result.holy);
   HtCompileResultDel(&result);
-  if (ok)
+  if (ok) {
+    HtScaleReset;
     HtStatus(FALSE,"OK  GLSL->viewport %dms (%d HolyC bytes)",
              ToI64((tS-started)*1000.0),holy_n);
+  }
   return ok;
 }
 
@@ -200,8 +222,8 @@ U0 HtDrawIt(CTask *task,CDC *dc)
   I64 bx,by,i,j,sx0,sy,stride=dc->width_internal,r88,g88,b88;
   I64 rr,gg,bb,o,r5,g5,b5;
   I64 vw=task->pix_width,vh=HT_VIEW_H;
-  I64 nbx=vw/HT_SCALE,nby=vh/HT_SCALE;
-  U8 *p,q[16];
+  I64 nbx=vw/ht_scale,nby=vh/ht_scale;
+  U8 *p,q[256];
   CHtFragColor fc;
   if (vh>task->pix_height)
     vh=task->pix_height;
@@ -229,9 +251,9 @@ U0 HtDrawIt(CTask *task,CDC *dc)
     for (by=0;by<nby;by++) {
       for (bx=0;bx<nbx;bx++) {
         fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
-        //At HT_SCALE=1 this is the exact Shadertoy pixel center (Y-up).
-        ht_fp(&ht_u,bx*HT_SCALE+HT_SCALE*0.5,
-              vh-(by*HT_SCALE+HT_SCALE*0.5),&fc);
+        //At ht_scale=1 this is the exact Shadertoy pixel center (Y-up).
+        ht_fp(&ht_u,bx*ht_scale+ht_scale*0.5,
+              vh-(by*ht_scale+ht_scale*0.5),&fc);
         r88=ToI64(fc.r*256.0);
         g88=ToI64(fc.g*256.0);
         b88=ToI64(fc.b*256.0);
@@ -241,13 +263,13 @@ U0 HtDrawIt(CTask *task,CDC *dc)
         rr=r88*31;
         gg=g88*31;
         bb=b88*31;
-        sx0=task->pix_left+bx*HT_SCALE;
-        if (0<=sx0<=dc->width-HT_SCALE) {
-          //Inline path must match HtQuantize semantics exactly. HT_SCALE=4
-          //aligns with the Bayer tile, so compute its 16 indices once/block.
-          for (i=0;i<HT_SCALE;i++) {
-            sy=task->pix_top+by*HT_SCALE+i;
-            for (j=0;j<HT_SCALE;j++) {
+        sx0=task->pix_left+bx*ht_scale;
+        if (0<=sx0<=dc->width-ht_scale) {
+          //Inline path matches HtQuantize at every block size: absolute
+          //screen coordinates select the Bayer offset for each output pixel.
+          for (i=0;i<ht_scale;i++) {
+            sy=task->pix_top+by*ht_scale+i;
+            for (j=0;j<ht_scale;j++) {
               o=htr_bofs[((sy&3)*4)+((sx0+j)&3)]*31;
               r5=(rr+o)>>8;
               g5=(gg+o)>>8;
@@ -255,15 +277,15 @@ U0 HtDrawIt(CTask *task,CDC *dc)
               if (r5<0) r5=0; else if (r5>31) r5=31;
               if (g5<0) g5=0; else if (g5>31) g5=31;
               if (b5<0) b5=0; else if (b5>31) b5=31;
-              q[i*HT_SCALE+j]=htr_lut[(r5<<10)+(g5<<5)+b5];
+              q[i*ht_scale+j]=htr_lut[(r5<<10)+(g5<<5)+b5];
             }
           }
-          for (i=0;i<HT_SCALE;i++) {
-            sy=task->pix_top+by*HT_SCALE+i;
+          for (i=0;i<ht_scale;i++) {
+            sy=task->pix_top+by*ht_scale+i;
             if (0<=sy<dc->height) {
               p=&dc->body[sy*stride+sx0];
-              for (j=0;j<HT_SCALE;j++)
-                p[j]=q[i*HT_SCALE+j];
+              for (j=0;j<ht_scale;j++)
+                p[j]=q[i*ht_scale+j];
             }
           }
         }
@@ -271,6 +293,24 @@ U0 HtDrawIt(CTask *task,CDC *dc)
     }
   }
   ht_shade_ms=ToI64((tS-ht_t0)*1000.0);
+  if (!ht_scale_lock) {
+    if (ht_shade_ms>250 && ht_scale<16) {
+      ht_scale_slow++;
+      ht_scale_fast=0;
+      if (ht_scale_slow>=2) {
+        ht_scale*=2;
+        ht_scale_slow=ht_scale_fast=0;
+      }
+    } else if (ht_shade_ms*4<150 && ht_scale>1) {
+      ht_scale_fast++;
+      ht_scale_slow=0;
+      if (ht_scale_fast>=4) {
+        ht_scale/=2;
+        ht_scale_slow=ht_scale_fast=0;
+      }
+    } else
+      ht_scale_slow=ht_scale_fast=0;
+  }
   HtDrawPane(task,dc);
 }
 
@@ -297,7 +337,7 @@ U0 HtSelfTest()
  //the task-doc dump.  Leaves the failed-compile state on screen at the
  //end so the final screenshot shows the error line over a live viewport.
   U0 (*before)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
-  I64 f1,f2,dx,dy,n=0,first=-1;
+  I64 f1,f2,dx,dy,n=0,first=-1,scale_lock_save,scale_up,scale_down;
   Bool mono=TRUE,vary=FALSE;
   Sleep(2000);			//~2s of shader v1 for the rolling frame dump
   before=ht_fp;
@@ -345,6 +385,28 @@ U0 HtSelfTest()
     "HT DITHER OK\n";
   else
     "HT DITHER FAIL\n";
+  scale_lock_save=ht_scale_lock;
+  ht_scale_lock=0;
+  if (HtCompileAndSwapGlsl(ht_glsl_slow)) {
+    Sleep(8000);
+    scale_up=ht_scale;
+  } else
+    scale_up=-1;
+  if (HtCompileAndSwapGlsl(ht_glsl1)) {
+    Sleep(8000);
+    scale_down=ht_scale;
+  } else
+    scale_down=-1;
+  if (scale_up==16 && 0<scale_down<=4)
+    "HT SCALE OK\n";
+  else
+    "HT SCALE FAIL up=%d down=%d\n",scale_up,scale_down;
+  ht_scale_lock=scale_lock_save;
+  if (ht_scale_lock)
+    ht_scale=ht_scale_lock;
+  else
+    ht_scale=16;
+  ht_scale_slow=ht_scale_fast=0;
   ht_fp=ht_default_fp;		//park on the animated default shader
   HtCompileAndSwapGlsl(ht_glsl_bad); //show GLSL error over live viewport
 }
@@ -571,6 +633,39 @@ U0 HtInteract()
 
 Bool ht_gui=FileFind("E:/GUI.TXT") || FileFind("E:/EDIT.TXT");
 Bool ht_ac_was_on=FALSE;
+U8 *ht_scale_buf,*ht_scale_p,ht_scale_tok[8];
+I64 ht_scale_sz,ht_scale_i=0;
+if (FileFind("E:/SCALE.TXT")) {
+  ht_scale_buf=FileRead("E:/SCALE.TXT",&ht_scale_sz);
+  if (ht_scale_buf) {
+    ht_scale_p=ht_scale_buf;
+    while (*ht_scale_p==' ' || *ht_scale_p=='\t' ||
+           *ht_scale_p=='\n' || *ht_scale_p=='\r') ht_scale_p++;
+    while (*ht_scale_p && *ht_scale_p!=' ' && *ht_scale_p!='\t' &&
+           *ht_scale_p!='\n' && *ht_scale_p!='\r' && ht_scale_i<7)
+      ht_scale_tok[ht_scale_i++]=*ht_scale_p++;
+    ht_scale_tok[ht_scale_i]=0;
+    if (!StrCmp(ht_scale_tok,"auto")) {
+      ht_scale_lock=0;
+      ht_scale=16;
+    } else if (!StrCmp(ht_scale_tok,"1"))
+      ht_scale_lock=ht_scale=1;
+    else if (!StrCmp(ht_scale_tok,"2"))
+      ht_scale_lock=ht_scale=2;
+    else if (!StrCmp(ht_scale_tok,"4"))
+      ht_scale_lock=ht_scale=4;
+    else if (!StrCmp(ht_scale_tok,"8"))
+      ht_scale_lock=ht_scale=8;
+    else if (!StrCmp(ht_scale_tok,"16"))
+      ht_scale_lock=ht_scale=16;
+    else {
+      ht_scale_lock=0;
+      ht_scale=16;
+      "HT SCALE BADPIN\n";
+    }
+    Free(ht_scale_buf);
+  }
+}
 StrCpy(ht_glsl_src,ht_glsl1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;

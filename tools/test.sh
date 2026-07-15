@@ -17,6 +17,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
 cd "$ROOT"
 
+# Existing screenshot proofs require the historical 4x4 block size. Proof 6
+# temporarily forces auto mode in-guest to exercise the adaptive controller.
+export HOLYTOY_SCALE=4
+
 tools/test-run-locks.sh || exit 2
 
 python3 tools/test_corpus_compat.py >/dev/null 2>&1 || {
@@ -169,6 +173,7 @@ if RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC; then
        grep -q "HT ERRSURVIVE OK" "$RD/guest.log" &&
        grep -q "HT MATH OK" "$RD/guest.log" &&
        grep -q "HT DITHER OK" "$RD/guest.log" &&
+       grep -q "HT SCALE OK" "$RD/guest.log" &&
        grep -qE "HolyToy +[^ ]+ms" "$RD/screen.txt" &&
        [ "$DISTINCT" -ge 3 ]; then
         ok "holytoy: recompile + math markers, ms readout, $DISTINCT distinct frames"

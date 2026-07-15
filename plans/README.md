@@ -25,6 +25,7 @@ deliberately left unplanned, folding in the deferred mouse-injection finding.
 | 007  | RGBA shader ABI, renderer-owned quantization (HTRENDER.HC), Bayer dithering | P1 | M/L | 006 | DONE (merged to main at `300a342` 2026-07-12; 10/10 proofs x2 pre-merge + x1 post-merge; readout 20ms vs 7ms baseline, budget amended to 3x in-plan) |
 | 008  | In-guest GLSL compiler skeleton, vertical slice, corpus measurement | P1 | L | 007 | DONE (host checks green in Codex runner; all 11 VM proofs incl. new guest-glsl verified on maintainer host 2026-07-12; corpus baseline 1/3 = 33.33%) |
 | 009  | End-to-end in-guest GLSL compiler vs Shadertoy corpus v1 (20 shaders, staged compile/install/exec reporting) | P1 | XL | 008 | DONE (corpus v1 20/20 compile/install/exec from 0/20 baseline, run-20260714-072742-lPP6Z8; 12/12 proofs; 3 visual spot-checks correct; heavy 3D at 2.6-23 s/frame TCG 4x4 -> perf follow-up; merged to main at `3e75c6a` 2026-07-14, post-merge 12/12 green) |
+| 010  | Adaptive render scale, visual-correctness oracle (committed reference DATs + `visual` reporting), Shadertoy corpus v2 (~50 shaders, texture-channel stratum measured honestly) | P1 | XL | 009 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
@@ -67,6 +68,16 @@ REJECTED (with one-line rationale)
   constructors/overloads + corpus and an honest compatibility %, then
   builtins/matrices/preprocessor breadth). Still queued for a later plan:
   the fixed-point `Sqrt` LUT (perf-floor Decision 4).
+- 010 is plan 009's recorded follow-up trio: adaptive render scale (heavy
+  3D shaders overran the 90 s cycle), the `visual` stage the 009 staged
+  table reserved (guest sample dumps vs committed GL reference DATs; GL is
+  needed only to regenerate references), and corpus v2 (~40 single-no-channel
+  + 8-12 texture-channel shaders from the same pinned author snapshots).
+  Stratum B is expected to fail compile — it corpus-measures the missing
+  texture runtime, which becomes the next direction plan (011) together
+  with any stratum-A clusters 010's bounded fix budget leaves unresolved.
+  A multipass/buffer corpus stratum stays deferred until the manifest has a
+  pass-graph schema and a runtime exists to consume it.
 
 ## Findings considered and deferred/rejected
 

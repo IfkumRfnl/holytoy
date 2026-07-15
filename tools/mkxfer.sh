@@ -60,6 +60,10 @@ fi
 if [ -n "${HOLYTOY_GUI:-}" ]; then
     echo gui | mcopy -o - x:/GUI.TXT
 fi
+# Optional deterministic/adaptive render-scale selection for tests and runs.
+if [ -n "${HOLYTOY_SCALE:-}" ]; then
+    echo "$HOLYTOY_SCALE" | mcopy -o - x:/SCALE.TXT
+fi
 # Headless editor proof: HT.HC enters its interactive loop, while RUN.HC still
 # owns status extraction and reboot after the test sends ESC.
 if [ -n "${HOLYTOY_EDIT_TEST:-}" ]; then
