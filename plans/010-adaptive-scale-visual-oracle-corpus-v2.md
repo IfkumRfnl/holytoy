@@ -25,7 +25,7 @@
 - **Depends on**: plans/009-glsl-e2e-corpus-v1.md (DONE at `3e75c6a`)
 - **Category**: direction
 - **Planned at**: commit `a214703`, 2026-07-15
-- **Execution status**: TODO
+- **Execution status**: IN PROGRESS (branch `plan-010-scale-oracle-corpus2`)
 
 ## Why this matters
 
@@ -659,6 +659,105 @@ in this file:
       20/20 compile / 20/20 install / 20/20 exec.
 - [ ] AGENTS.md documents `HOLYTOY_SCALE`, `HOLYTOY_VISDUMP`, `CORPUS_DIR`;
       `plans/README.md` row updated; README.md untouched.
+
+## Execution evidence (recorded 2026-07-15, branch plan-010-scale-oracle-corpus2)
+
+### Stage A — adaptive render scale
+
+- Drift check: `git diff --stat a214703..HEAD` over the in-scope paths was
+  empty (HEAD == a214703 at start); `corpus/shadertoy/v1/` zero diff. The
+  working tree carried a prior agent's Stage A draft, which was reviewed
+  against this plan line-by-line, reordered/verified, and adopted.
+- Step A1/A3: `make run SRC=src/holytoy/HT.HC` →
+  `run-20260715-103905-vN4wlj`: all self-test markers OK including first-try
+  `HT SCALE OK`; header ` HolyToy  29ms 1: 1 ...` (auto mode settled at 1:1
+  on the cheap default shader).
+- Step A2: `HOLYTOY_SCALE=4 make run SRC=src/holytoy/HT.HC` →
+  `run-20260715-103955-PR2LVt`: header ` HolyToy   2ms 1: 4`, no
+  `HT SCALE BADPIN`, `HT SCALE OK` still passes (self-test overrides and
+  restores the lock).
+- Step A4 payoff: prepped 4tsGD7 (`S06.GLS`) at default auto and stock
+  `RUN_TIMEOUT=90` → `run-20260715-104043-71rkcP`: exit 0 in ~15 s wall,
+  `HT GUEST GLSL OK`, **10 distinct trailing frames**, settled at
+  **1:16, 44 ms/frame** (44*4=176 > 150 keeps it conservatively at 1:16
+  under TCG, exactly the hysteresis design).
+- Suite after Stage A: `-- 12 passed, 0 failed --` (test-20260715-1040xx
+  runs; dither/editor deterministic under the suite-wide HOLYTOY_SCALE=4
+  pin, hash 6d5c42e03ecb2f002f8ba8316c4dfb94 both frames).
+
+### Stage B — visual oracle
+
+- Step B3 GL route: **route 1 (moderngl via nix) worked** with two
+  documented additions: `nix build nixpkgs#mesa` + `nixpkgs#libglvnd`, then
+  `LD_LIBRARY_PATH=<mesa>/lib:<glvnd>/lib`
+  `__EGL_VENDOR_LIBRARY_FILENAMES=<mesa>/share/glvnd/egl_vendor.d/50_mesa.json`
+  `LIBGL_ALWAYS_SOFTWARE=1`, moderngl standalone EGL context →
+  `llvmpipe (LLVM 21.1.8) / OpenGL 4.6 Core Mesa 26.1.4`. (Default GLX
+  route failed `glXChooseFBConfig`; EGL device route needed mesa's libEGL.)
+- Gate: GL-rendered gradient vs analytic reference: **max diff 0/255** on
+  all 8640 bytes; B identical to A.
+- Step B1: `HOLYTOY_VISDUMP=1 make run SRC=tests/glsl/gradient.glsl` →
+  `run-20260715-104927-Zwkdbw`: `HT VISUAL DUMP OK`, V00A.DAT exactly 8640
+  bytes, first sample `251 251 251` (the plan's predicted value).
+  Determinism: second run `run-20260715-105025-kcgRTV` → all four DATs
+  md5-identical (`bd73e0a8...`); guest dump vs GL reference: meanerr 0.00,
+  maxerr 0, 100.0% both states.
+- Step B2: proof 13 wired; `make test` → `-- 13 passed, 0 failed --`
+  (holytoy proof `test-20260715-105346-20623-holytoy` contains
+  `HT SCALE OK`; oracle proof `test-20260715-105554-20623-oracle`).
+- refs-v1: 40 DATs committed (20/20 shaders rendered).
+- Step B4 v1 corpus run `run-20260715-105751-1hEx2i`: staged table
+  **20/20 compile, 20/20 install, 20/20 exec**, guest DONE 20/20, all 20
+  `visual OK` dump markers; oracle table **17/20 within tolerance**:
+
+  | shader | meanA | maxA | pctA | meanB | maxB | pctB | visual |
+  |---|---|---|---|---|---|---|---|
+  | 3dfGR2 | 5.16 | 159 | 90.3 | 4.91 | 205 | 91.4 | OK |
+  | 4dSBz3 | 0.00 | 1 | 100.0 | 0.00 | 1 | 100.0 | OK |
+  | 4lfGWr | 46.46 | 255 | 43.4 | 1.33 | 255 | 99.5 | FAIL |
+  | 4sfGWX | 26.69 | 231 | 68.8 | 26.02 | 247 | 77.0 | FAIL |
+  | 4tl3z4 | 7.80 | 184 | 87.5 | 22.90 | 255 | 82.1 | FAIL |
+  | 4tsGD7 | 0.00 | 1 | 100.0 | 0.00 | 1 | 100.0 | OK |
+  | DdcyRf | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+  | Mdf3zM | 0.01 | 6 | 100.0 | 0.00 | 1 | 100.0 | OK |
+  | MfjBDV | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+  | MlGcRz | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+  | MtfBDN | 0.99 | 1 | 100.0 | 0.01 | 1 | 100.0 | OK |
+  | MtlGWM | 1.14 | 6 | 100.0 | 1.14 | 6 | 100.0 | OK |
+  | Wtj3Wc | 0.69 | 104 | 99.2 | 0.13 | 16 | 100.0 | OK |
+  | XX2XDd | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+  | XdcGzr | 4.11 | 255 | 96.9 | 9.97 | 254 | 92.3 | OK |
+  | lXGyDR | 0.01 | 1 | 100.0 | 0.01 | 1 | 100.0 | OK |
+  | ldjBW1 | 5.20 | 218 | 93.6 | 5.71 | 207 | 92.6 | OK |
+  | llcyD2 | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+  | md2yWh | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+  | wdyBRV | 0.00 | 0 | 100.0 | 0.00 | 0 | 100.0 | OK |
+
+  4dSBz3, 4tsGD7, Wtj3Wc all pass, as required. Per-failure diagnoses (all
+  trace to plan-009 recorded deviations, no new-bug cluster):
+  - **4lfGWr** (Bidirectional path tracer 2): Monte-Carlo RNG via
+    `fract(sin(seed)*43758.5453...)` — the recorded LUT-sin (<=2e-4) and
+    F64-vs-F32 deviations are amplified ~5e4x and decorrelate the RNG
+    stream; state B passes because the time-advanced seeds converge.
+  - **4sfGWX** (Wolfenstein 3D): procedural wall/noise textures via
+    `fract(sin(n*14.123)*51231.5)` — same hash decorrelation on textured
+    surfaces; geometry/structure samples agree (68.8/77.0% within).
+  - **4tl3z4** (Simple path tracer): same RNG idiom as 4lfGWr (near-miss
+    87.5/82.1% — diffuse-GI noise).
+
+### Stage C — corpus v2
+
+- `python3 corpus/shadertoy/v2/validate.py` → exit 0: accepted=51
+  (39 single_no_channels + 12 single_texture_channels), rejected=8,
+  domains 25 2d / 26 3d, licenses 33 CC-BY-NC-SA-4.0 + 18 AGPL-3.0-only.
+- Stratum-A shortfall recorded: the two pinned snapshots yield only 19
+  qualifying new stratum-A candidates (12 Reinder, 7 beans_please) under
+  the unchanged license/purity gates → 39 total vs the >=40 target; the
+  plan's take-what-exists rule applied (v2 README, Composition section).
+  Stratum B: 15 qualified, capped at 12; 3 deferrals in rejected.jsonl.
+- refs-v2: `glsl_ref.py --only-stratum single_no_channels` wrote 78 DATs
+  (39/39 shaders) via the same recorded GL route.
+- `git status --porcelain corpus/shadertoy/v1` → empty throughout.
 
 ## STOP conditions
 
