@@ -14,8 +14,9 @@ the interrupted task), so nothing else runs inside the timed loops.
 - QEMU 11.0.1, **TCG** (no `/dev/kvm`), single vCPU, `-m 512`
 - WSL2 (kernel 6.6.87.2-microsoft-standard-WSL2), Ubuntu
 - Host CPU: 13th Gen Intel Core i5-13450HX
-- **KVM: not measured — TODO** (rerun `src/bench-math.HC` on a host with
-  `/dev/kvm`; revisit the format decision only if KVM flips the ordering)
+- **KVM: measured 2026-07-17** on the same host after `/dev/kvm` appeared
+  (config.sh auto-enables `-enable-kvm`); see the KVM section below. The
+  ordering did **not** flip, so the plan 003 format decision stands.
 
 ## Numbers (run `verify-003-Uh068Z`; rerun `verify-003-NLlQYN` agreed
 within 1% on every variant — and flipped the fx16/fx22 ordering, i.e. a tie)
@@ -36,6 +37,44 @@ LUT, distance term still F64 `Sqrt`; `*nd` = distance term dropped
 | f64     | 160x120+4x4| 18       | 55.6 |
 | fx16    | 160x120+4x4| 8        | 125  |
 | fx22    | 160x120+4x4| 8        | 125  |
+
+## KVM numbers (runs `verify-kvm-4R2wVC` and `run-20260717-113005-muyiIG`,
+measured 2026-07-17; the two runs agree exactly on every variant)
+
+Same host, same benchmark, QEMU 11.0.1 with `-enable-kvm`, single vCPU.
+`BENCH maxerr 8/65536 OK` unchanged.
+
+| variant | resolution | ms/frame | fps  | vs TCG |
+|---------|------------|----------|------|--------|
+| f64     | 640x480    | 43       | 23.3 | 6.3x   |
+| fx16    | 640x480    | 5        | 200  | 21.6x  |
+| fx22    | 640x480    | 4        | 250  | 27.5x  |
+| f64nd   | 640x480    | 30       | 33.3 | 5.4x   |
+| fx16nd  | 640x480    | 3        | 333  | 8.0x   |
+| fx22nd  | 640x480    | 3        | 333  | 8.0x   |
+| f64     | 160x120+4x4| 3        | 333  | 6.0x   |
+| fx16    | 160x120+4x4| <1       | n/a  | >8x    |
+| fx22    | 160x120+4x4| <1       | n/a  | >8x    |
+
+KVM takeaways:
+
+1. **Ordering unchanged — the LUT still wins, by more** (43 vs 5 ms at
+   640x480, 8.6x; TCG was 2.5x). x87 `FSIN` under KVM is real hardware
+   but still microcoded and slow relative to table lookups. The 16.16
+   format decision stands.
+2. **Native F64 `Sin` is now affordable where correctness wants it**:
+   43 ms/frame for the full plasma formula at 640x480 (~23 fps) means
+   exact-sin semantics (plan 011 candidate, targeting the 11 visual-oracle
+   hash-decorrelation FAILs) costs interactivity, not feasibility.
+3. **The adaptive-scale controller budget changed regimes**: at TCG-era
+   thresholds (coarsen >250 ms, refine when projected <150 ms) a shader
+   could settle at ~5 fps without coarsening. Retuned 2026-07-17 in
+   `HT.HC` to coarsen >70 ms / refine when `ht_shade_ms*4 < 60` — about
+   two winmgr ~33 ms periods, and refine only when the projected
+   next-finer cost stays comfortably interactive.
+4. **The remaining ceiling is single-core**: QEMU passes no `-smp`, so one
+   vCPU shades everything. Multicore fan-out (TempleOS `Spawn` with
+   `target_cpu`) is the next multiplier, ~4x+.
 
 ## Accuracy
 

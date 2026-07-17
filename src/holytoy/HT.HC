@@ -294,14 +294,17 @@ U0 HtDrawIt(CTask *task,CDC *dc)
   }
   ht_shade_ms=ToI64((tS-ht_t0)*1000.0);
   if (!ht_scale_lock) {
-    if (ht_shade_ms>250 && ht_scale<16) {
+    //KVM-era budget (docs/notes/perf-floor.md): coarsen past two winmgr
+    //~33 ms periods; refine only if the projected next-finer cost (4x
+    //samples) stays interactive. TCG values were 250/150.
+    if (ht_shade_ms>70 && ht_scale<16) {
       ht_scale_slow++;
       ht_scale_fast=0;
       if (ht_scale_slow>=2) {
         ht_scale*=2;
         ht_scale_slow=ht_scale_fast=0;
       }
-    } else if (ht_shade_ms*4<150 && ht_scale>1) {
+    } else if (ht_shade_ms*4<60 && ht_scale>1) {
       ht_scale_fast++;
       ht_scale_slow=0;
       if (ht_scale_fast>=4) {

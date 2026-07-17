@@ -286,7 +286,8 @@ answer `y` (install), `y` (VM?), any key, wait, `y` (reboot now), then run
 ## Environment
 
 WSL2 Ubuntu; qemu/mtools installed via `nix profile add` (no sudo here).
-`/dev/kvm` absent → TCG (config.sh auto-enables KVM when present).
+`/dev/kvm` present since 2026-07 → KVM (config.sh auto-detects; hosts
+without it fall back to TCG). Perf numbers: docs/notes/perf-floor.md.
 `make gui` needs WSLg (`DISPLAY` set). A parallel agent session maintains
 `skills/holyc/` and `vendor/TempleOS` — coordinate through git, don't
 rewrite those trees.
