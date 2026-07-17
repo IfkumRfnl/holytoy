@@ -18,6 +18,8 @@ MAX_RUNS=3                # concurrent VMs; each uses MEM MiB and ~1 TCG core
 RUN_QUEUE_TIMEOUT=300     # wait this long for any VM slot
 SMP=4                     # guest vCPUs; TempleOS is SMP (core 0 owns the
                           # winmgr, cores 1+ compute via Spawn target_cpu)
+                          # HOLYTOY_CORES=1..$SMP|auto pins how many cores the
+                          # plan-012 background render task shades on (E:/CORES.TXT)
 ACCEL_ARGS="-smp $SMP"
 [ -e /dev/kvm ] && [ -w /dev/kvm ] && ACCEL_ARGS="-enable-kvm -smp $SMP"
 

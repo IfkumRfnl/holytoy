@@ -65,12 +65,56 @@ Bool ht_status_err;		//status line draws LTRED when TRUE
 Bool ht_native_editor;		//a native CDoc backs the visible editor pane
 I64 ht_edit_line,ht_edit_col;	//zero-based native CDoc cursor position
 I64 ht_edit_top,ht_edit_left;	//visible source origin in lines/columns
-F64 ht_t0;			//shading-loop timing start (per frame)
-I64 ht_shade_ms;		//last frame's shading time, whole ms
+I64 ht_shade_ms;		//last frame's shading time, whole ms (render task)
 Bool ht_mouse_lb_prev;		//rising-edge state for iMouse click position
 I64 ht_scale=16;		//runtime shade-block size: 1,2,4,8,16
 I64 ht_scale_lock=0;		//0 = adaptive; otherwise pinned by SCALE.TXT
 I64 ht_scale_slow=0,ht_scale_fast=0;	//controller consecutive frames
+
+//plan 012: SMP background render task. Shading moves OUT of HtDrawIt into a
+//dedicated render task (core 0) that fans contiguous block-row bands across
+//worker cores 1..nb via JobQue/JobResGet into an offscreen double buffer;
+//HtDrawIt shrinks to a pure blit of the last COMPLETE frame + pane, so the
+//editor stays responsive no matter how slow a shader is. Byte-identical to
+//the pre-012 single-core output by construction (disjoint bands, snapshotted
+//uniforms, identical integer/F64 math). See plans/012-smp-background-render.md
+//and the ht_fp reentrancy contract above.
+#define HT_FB_MAXW	1024	//palette-index row stride ceiling (>= any viewport)
+class CHtFrameBuf { CHtUniforms snap; U8 *pix; U8 *pix_raw; };
+CHtFrameBuf ht_fb[2];		//double buffer: front (shown) + back (in work)
+I64 ht_fb_stride=HT_FB_MAXW;	//64-aligned row stride into fb->pix
+I64 ht_front_idx=0,ht_back_idx=1;	//published index (atomic word) / work index
+Bool ht_have_frame=FALSE;	//a complete frame has been published at least once
+I64 ht_render_cores;		//cores that shade; 1..mp_cnt (1 => single-core)
+I64 ht_render_pause=0;		//nesting pause count (0 = running); NOT a bit
+I64 ht_render_busy=0;		//bit 0: a frame's fan-out is in flight
+I64 ht_render_exit=0;		//set (with pause held) to tear the task down
+CTask *ht_render_task=NULL;	//the spawned frame-loop task
+CTask *ht_win_task=NULL;	//the HolyToy window task (viewport geometry)
+class CHtBandDesc
+{//one contiguous block-row band handed to a worker (or shaded inline).
+  I64 band,y0_blk,y1_blk,nbx,vh,fb_idx,scale,pix_left,pix_top;
+};
+CHtBandDesc ht_desc[MP_PROCESSORS_NUM];
+
+U0 HtRenderPause()
+{//Quiesce the render task before touching long-lived shared state (ht_fp
+ //rebind, buffer free, single-core visual dump/corpus). On return no worker
+ //is executing ht_fp and no new frame will start until HtRenderResume. Uses
+ //a nesting COUNT, not a bit, so a shader swap inside an already-paused
+ //HtCorpusRun does not resume it early. Defined here (ahead of HtInstallHoly,
+ //its first caller) since HolyC resolves calls top-down. Only core-0 tasks
+ //call this; the render task never does.
+  ht_render_pause++;
+  while (Bt(&ht_render_busy,0))
+    Yield;			//wait out at most one in-flight frame
+}
+
+U0 HtRenderResume()
+{
+  if (ht_render_pause>0)
+    ht_render_pause--;
+}
 
 U8 *ht_glsl1=
 "void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
@@ -210,7 +254,14 @@ Bool HtInstallHoly(U8 *holy)
   Free(buf);
   if (ok) {
     if (ht_new_fp) {
+      //plan 012: quiesce the render task so no worker is executing the old
+      //ht_fp when we flip the pointer (011 contract 3: no rebind during
+      //fan-out). The old shader stays live until the barrier, satisfying
+      //"previous shader kept on error." ExePutS2 above ran unguarded because
+      //it only APPENDS new JITed code; workers keep using the old ht_fp.
+      HtRenderPause;
       ht_fp=ht_new_fp;
+      HtRenderResume;
       HtStatus(FALSE,"OK  GLSL compiled (%d HolyC bytes)",n);
     } else {
       ok=FALSE;
@@ -279,17 +330,225 @@ U0 HtFrameSetup(CHtUniforms *u)
   ht_frame.idate.w=u->date_secs;
 }
 
-U0 HtDrawIt(CTask *task,CDC *dc)
-{//dc aliases gr.dc2; raw body pokes are ABSOLUTE screen coords.
-  I64 bx,by,i,j,sx0,sy,stride=dc->width_internal,r88,g88,b88;
-  I64 rr,gg,bb,o,r5,g5,b5;
-  I64 vw=task->pix_width,vh=HT_VIEW_H;
-  I64 nbx=vw/ht_scale,nby=vh/ht_scale;
-  U8 *p,q[256];
+U0 HtShadeBand(CHtBandDesc *d)
+{//plan 012: shade one contiguous block-row band into ht_fb[d->fb_idx].pix,
+ //reproducing the pre-012 inline HtDrawIt block loop BYTE-FOR-BYTE: same
+ //ToI64(fc.*256.0) 8.8 clamp, same htr_bofs Bayer phase from ABSOLUTE screen
+ //coords ((pix_top+y)&3,(pix_left+x)&3), same htr_lut palette index. Writes
+ //viewport-relative pixels at row stride ht_fb_stride; HtDrawIt copies them
+ //to dc->body. Pure/reentrant: reads only its args + read-only LUTs, calls
+ //ht_fp (reentrant contract), writes only its disjoint fb rows.
+  I64 bx,by,i,j,r88,g88,b88,rr,gg,bb,o,r5,g5,b5,x0,y;
+  I64 scale=d->scale,nbx=d->nbx,vh=d->vh,pl=d->pix_left,pt=d->pix_top;
+  U8 *pix=ht_fb[d->fb_idx].pix,*p;
   CHtFragColor fc;
+  for (by=d->y0_blk;by<d->y1_blk;by++) {
+    for (bx=0;bx<nbx;bx++) {
+      fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
+      //At scale=1 this is the exact Shadertoy pixel center (Y-up).
+      ht_fp(bx*scale+scale*0.5,vh-(by*scale+scale*0.5),&fc);
+      r88=ToI64(fc.r*256.0);
+      g88=ToI64(fc.g*256.0);
+      b88=ToI64(fc.b*256.0);
+      if (r88<0) r88=0; else if (r88>256) r88=256;
+      if (g88<0) g88=0; else if (g88>256) g88=256;
+      if (b88<0) b88=0; else if (b88>256) b88=256;
+      rr=r88*31;
+      gg=g88*31;
+      bb=b88*31;
+      x0=bx*scale;
+      for (i=0;i<scale;i++) {
+        y=by*scale+i;
+        p=&pix[y*ht_fb_stride+x0];
+        for (j=0;j<scale;j++) {
+          o=htr_bofs[(((pt+y)&3)*4)+((pl+x0+j)&3)]*31;
+          r5=(rr+o)>>8;
+          g5=(gg+o)>>8;
+          b5=(bb+o)>>8;
+          if (r5<0) r5=0; else if (r5>31) r5=31;
+          if (g5<0) g5=0; else if (g5>31) g5=31;
+          if (b5<0) b5=0; else if (b5>31) b5=31;
+          p[j]=htr_lut[(r5<<10)+(g5<<5)+b5];
+        }
+      }
+    }
+  }
+}
+
+I64 HtShadeBandJob(U8 *data)
+{//Worker (Seth-task) entry for one band. Absorbs any HolyC throw so a
+ //faulting shader keeps the last-good front buffer instead of aborting the
+ //JobResGet barrier; JobRunOne additionally wraps the JOBT_CALL. Returns TRUE
+ //when the band shaded cleanly; the render task ANDs these across bands.
+  CHtBandDesc *d=data;
+  Bool ok=TRUE;
+  try {
+    HtShadeBand(d);
+  } catch {
+    Fs->catch_except=TRUE;
+    ok=FALSE;
+  }
+  return ok;
+}
+
+U0 HtScaleController(I64 ms)
+{//plan 012: lifted verbatim out of HtDrawIt; consumes the render task's
+ //measured frame time. KVM-era budget (docs/notes/perf-floor.md): coarsen
+ //past two ~33 ms periods; refine only if the projected next-finer cost (4x
+ //samples) stays interactive. TCG values were 250/150.
+  if (ht_scale_lock)
+    return;
+  if (ms>70 && ht_scale<16) {
+    ht_scale_slow++;
+    ht_scale_fast=0;
+    if (ht_scale_slow>=2) {
+      ht_scale*=2;
+      ht_scale_slow=ht_scale_fast=0;
+    }
+  } else if (ms*4<60 && ht_scale>1) {
+    ht_scale_fast++;
+    ht_scale_slow=0;
+    if (ht_scale_fast>=4) {
+      ht_scale/=2;
+      ht_scale_slow=ht_scale_fast=0;
+    }
+  } else
+    ht_scale_slow=ht_scale_fast=0;
+}
+
+U0 HtRenderTask(U8 *ignored)
+{//plan 012 frame loop (spawned once on core 0): snapshot the uniforms, fan
+ //contiguous band jobs across cores 1..nb, drain the JobResGet barrier, and
+ //publish the completed buffer with one aligned-word store. Spends almost
+ //the whole frame inside JobResGet (which Yields), so the winmgr and editor
+ //keep core 0 while workers shade on cores 1..nb.
+  I64 nb,k,cores,vw,vh,nbx,nby,scale,pl,pt,nbands,y0,y1,pace;
+  Bool ok;
+  CJob *jobs[MP_PROCESSORS_NUM];
+  CHtFrameBuf *fb;
+  F64 t0,bt,acc;
+  while (TRUE) {
+    if (ht_render_exit)
+      goto rt_done;
+    LBts(&ht_render_busy,0);	//claim busy BEFORE re-reading pause so a
+				//pauser can never slip past a starting frame
+    if (ht_render_pause || !ht_fp || !ht_win_task) {
+      LBtr(&ht_render_busy,0);
+      Sleep(2);
+      goto rt_cont;
+    }
+    pl=ht_win_task->pix_left;
+    pt=ht_win_task->pix_top;
+    vw=ht_win_task->pix_width;
+    vh=HT_VIEW_H;
+    if (vh>ht_win_task->pix_height)
+      vh=ht_win_task->pix_height;
+    if (vw>ht_fb_stride)
+      vw=ht_fb_stride;
+    scale=ht_scale;
+    if (vw<scale || vh<scale) {	//window not laid out yet: skip this frame
+      LBtr(&ht_render_busy,0);
+      Sleep(2);
+      goto rt_cont;
+    }
+    nbx=vw/scale;
+    nby=vh/scale;
+    fb=&ht_fb[ht_back_idx];
+    //Snapshot the raw uniforms ONCE, then derive ht_frame; every worker for
+    //this frame reads the same read-only ht_frame (011 contract 1). HtDrawIt
+    //may keep mutating ht_u for the NEXT snapshot; in-flight workers never
+    //see it. HtDrawIt no longer calls HtFrameSetup (plan 012 reconciliation).
+    MemCpy(&fb->snap,&ht_u,sizeof(CHtUniforms));
+    HtFrameSetup(&fb->snap);
+    cores=ht_render_cores;
+    if (cores<1) cores=1;
+    if (cores>mp_cnt) cores=mp_cnt;
+    nb=cores-1;
+    if (nb>nby) nb=nby;
+    if (nb<0) nb=0;
+    ok=TRUE;
+    if (nb<1) {
+      //Single-core fallback (pinned cores=1 or a uniprocessor guest): shade
+      //every band on core 0, Yield between contiguous bands so the winmgr /
+      //editor still run. Measure ONLY the shading time (exclude the Yields)
+      //so the adaptive controller behaves exactly like the validated pre-012
+      //inline path. Strictly better than the old monolithic draw_it.
+      nbands=nby;
+      if (nbands>8) nbands=8;
+      if (nbands<1) nbands=1;
+      for (k=0;k<nbands;k++) {
+        y0=nby*k/nbands;
+        y1=nby*(k+1)/nbands;
+        ht_desc[k].band=k;
+        ht_desc[k].y0_blk=y0;
+        ht_desc[k].y1_blk=y1;
+        ht_desc[k].nbx=nbx;
+        ht_desc[k].vh=vh;
+        ht_desc[k].fb_idx=ht_back_idx;
+        ht_desc[k].scale=scale;
+        ht_desc[k].pix_left=pl;
+        ht_desc[k].pix_top=pt;
+      }
+      acc=0.0;
+      for (k=0;k<nbands;k++) {
+        bt=tS;
+        HtShadeBand(&ht_desc[k]);
+        acc+=tS-bt;
+        Yield;
+      }
+      ht_shade_ms=ToI64(acc*1000.0);
+    } else {
+      //Static contiguous row-bands, one per worker core (cores 1..nb): band
+      //boundaries are 64-aligned (fb_stride is), so writes never false-share.
+      for (k=0;k<nb;k++) {
+        y0=nby*k/nb;
+        y1=nby*(k+1)/nb;
+        ht_desc[k].band=k;
+        ht_desc[k].y0_blk=y0;
+        ht_desc[k].y1_blk=y1;
+        ht_desc[k].nbx=nbx;
+        ht_desc[k].vh=vh;
+        ht_desc[k].fb_idx=ht_back_idx;
+        ht_desc[k].scale=scale;
+        ht_desc[k].pix_left=pl;
+        ht_desc[k].pix_top=pt;
+      }
+      t0=tS;
+      for (k=0;k<nb;k++)
+        jobs[k]=JobQue(&HtShadeBandJob,&ht_desc[k],1+k,0);
+      for (k=0;k<nb;k++)
+        if (!JobResGet(jobs[k]))
+          ok=FALSE;		//a band faulted: keep the last-good front buffer
+      ht_shade_ms=ToI64((tS-t0)*1000.0);
+    }
+    LBtr(&ht_render_busy,0);
+    if (ok) {
+      ht_front_idx=ht_back_idx;	//PUBLISH: single aligned word store (atomic)
+      ht_back_idx=ht_back_idx^1;
+      ht_have_frame=TRUE;
+    }
+    HtScaleController(ht_shade_ms);
+    pace=33-ht_shade_ms;	//pace to ~30 fps; also a guaranteed yield point
+    if (pace<1)
+      pace=1;
+    Sleep(pace);
+rt_cont:;
+  }
+rt_done:
+  LBtr(&ht_render_busy,0);
+}
+
+U0 HtDrawIt(CTask *task,CDC *dc)
+{//plan 012: NO shading here. Update ht_u for the NEXT snapshot (time, frame,
+ //resolution, mouse, date), then blit the last COMPLETE frame the render
+ //task published, plus the pane. A screendump can only ever see a whole
+ //frame (double buffered) -> no tearing, and the editor never blocks on a
+ //slow shade. Raw body pokes are ABSOLUTE screen coords.
+  I64 y,sy,cw,stride=dc->width_internal,f;
+  I64 vw=task->pix_width,vh=HT_VIEW_H;
+  CDateStruct ds;
   if (vh>task->pix_height)
     vh=task->pix_height;
-  CDateStruct ds;
   Date2Struct(&ds,Now);
   ht_u.date_year=ds.year;
   ht_u.date_mon=ds.mon;
@@ -307,75 +566,20 @@ U0 HtDrawIt(CTask *task,CDC *dc)
     ht_u.click_y=ht_u.mouse_y;
   }
   ht_mouse_lb_prev=ht_u.mouse_lb;
-  HtFrameSetup(&ht_u);		//plan 011: fill ht_frame once before shading
-  ht_t0=tS;			//time the shading work only, not the winmgr
-				//frame cadence (docs/notes/perf-floor.md)
-  if (ht_fp) {
-    for (by=0;by<nby;by++) {
-      for (bx=0;bx<nbx;bx++) {
-        fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
-        //At ht_scale=1 this is the exact Shadertoy pixel center (Y-up).
-        ht_fp(bx*ht_scale+ht_scale*0.5,
-              vh-(by*ht_scale+ht_scale*0.5),&fc);
-        r88=ToI64(fc.r*256.0);
-        g88=ToI64(fc.g*256.0);
-        b88=ToI64(fc.b*256.0);
-        if (r88<0) r88=0; else if (r88>256) r88=256;
-        if (g88<0) g88=0; else if (g88>256) g88=256;
-        if (b88<0) b88=0; else if (b88>256) b88=256;
-        rr=r88*31;
-        gg=g88*31;
-        bb=b88*31;
-        sx0=task->pix_left+bx*ht_scale;
-        if (0<=sx0<=dc->width-ht_scale) {
-          //Inline path matches HtQuantize at every block size: absolute
-          //screen coordinates select the Bayer offset for each output pixel.
-          for (i=0;i<ht_scale;i++) {
-            sy=task->pix_top+by*ht_scale+i;
-            for (j=0;j<ht_scale;j++) {
-              o=htr_bofs[((sy&3)*4)+((sx0+j)&3)]*31;
-              r5=(rr+o)>>8;
-              g5=(gg+o)>>8;
-              b5=(bb+o)>>8;
-              if (r5<0) r5=0; else if (r5>31) r5=31;
-              if (g5<0) g5=0; else if (g5>31) g5=31;
-              if (b5<0) b5=0; else if (b5>31) b5=31;
-              q[i*ht_scale+j]=htr_lut[(r5<<10)+(g5<<5)+b5];
-            }
-          }
-          for (i=0;i<ht_scale;i++) {
-            sy=task->pix_top+by*ht_scale+i;
-            if (0<=sy<dc->height) {
-              p=&dc->body[sy*stride+sx0];
-              for (j=0;j<ht_scale;j++)
-                p[j]=q[i*ht_scale+j];
-            }
-          }
-        }
-      }
+  ht_win_task=task;		//keep the render task's geometry source current
+  f=ht_front_idx;		//read the published index once (atomic word)
+  if (ht_have_frame && ht_fb[f].pix) {
+    cw=vw;
+    if (cw>ht_fb_stride)
+      cw=ht_fb_stride;
+    if (task->pix_left+cw>dc->width)
+      cw=dc->width-task->pix_left;
+    for (y=0;y<vh;y++) {
+      sy=task->pix_top+y;
+      if (0<=sy<dc->height && cw>0)
+        MemCpy(&dc->body[sy*stride+task->pix_left],
+               &ht_fb[f].pix[y*ht_fb_stride],cw);
     }
-  }
-  ht_shade_ms=ToI64((tS-ht_t0)*1000.0);
-  if (!ht_scale_lock) {
-    //KVM-era budget (docs/notes/perf-floor.md): coarsen past two winmgr
-    //~33 ms periods; refine only if the projected next-finer cost (4x
-    //samples) stays interactive. TCG values were 250/150.
-    if (ht_shade_ms>70 && ht_scale<16) {
-      ht_scale_slow++;
-      ht_scale_fast=0;
-      if (ht_scale_slow>=2) {
-        ht_scale*=2;
-        ht_scale_slow=ht_scale_fast=0;
-      }
-    } else if (ht_shade_ms*4<60 && ht_scale>1) {
-      ht_scale_fast++;
-      ht_scale_slow=0;
-      if (ht_scale_fast>=4) {
-        ht_scale/=2;
-        ht_scale_slow=ht_scale_fast=0;
-      }
-    } else
-      ht_scale_slow=ht_scale_fast=0;
   }
   HtDrawPane(task,dc);
 }
@@ -451,9 +655,11 @@ Bool HtLoadGlsl()
   else
     "HT GUEST GLSL FAIL\n";
   if (ok && FileFind("E:/VISDUMP.TXT")) {
-    //Single-shader oracle dump. draw_it is already installed here;
-    //concurrent HtDrawIt frames would race the generated globals'
-    //frame-rebind cache, so park it and let any in-flight frame drain.
+    //Single-shader oracle dump: must run single-core on core 0. plan 012:
+    //pause the render task so no background frame calls ht_fp concurrently,
+    //then dump deterministically. draw_it is also parked (it no longer
+    //shades, but keep the historical park for a still screenshot).
+    HtRenderPause;
     Fs->draw_it=NULL;
     Sleep(250);
     if (HtVisualDump("E:/V00A.DAT",0.5,15) &&
@@ -462,6 +668,7 @@ Bool HtLoadGlsl()
     else
       "HT VISUAL DUMP ERR\n";
     Fs->draw_it=&HtDrawIt;
+    HtRenderResume;
   }
   Free(buf);
   return TRUE;
@@ -472,7 +679,7 @@ U0 HtSelfTest()
  //the task-doc dump.  Leaves the failed-compile state on screen at the
  //end so the final screenshot shows the error line over a live viewport.
   U0 (*before)(F64 frag_x,F64 frag_y,CHtFragColor *out_color);
-  I64 f1,f2,dx,dy,n=0,first=-1,scale_lock_save,scale_up,scale_down;
+  I64 f1,f2,dx,dy,n=0,first=-1,scale_lock_save,scale_up,scale_down,cores_save;
   Bool mono=TRUE,vary=FALSE,ctx_ok=FALSE;
   CHtFragColor c1,c2,c3;
   Sleep(2000);			//~2s of shader v1 for the rolling frame dump
@@ -544,6 +751,14 @@ U0 HtSelfTest()
       ToI64(c1.r*1000.0),ToI64(c2.r*1000.0),ToI64(c3.r*1000.0);
   scale_lock_save=ht_scale_lock;
   ht_scale_lock=0;
+  //plan 012: pin the render task to single-core for the SCALE sub-test. The
+  //KVM controller thresholds were validated against single-core frame time,
+  //and single-core fallback measures pure shading ms (Yields excluded), so
+  //the slow fixture still coarsens to 1:16 and the fast one refines to <=1:4
+  //independently of mp_cnt. (An aligned-word write; the render task re-reads
+  //ht_render_cores each frame, no handshake needed.)
+  cores_save=ht_render_cores;
+  ht_render_cores=1;
   if (HtCompileAndSwapGlsl(ht_glsl_slow)) {
     Sleep(8000);
     scale_up=ht_scale;
@@ -554,6 +769,7 @@ U0 HtSelfTest()
     scale_down=ht_scale;
   } else
     scale_down=-1;
+  ht_render_cores=cores_save;
   if (scale_up==16 && 0<scale_down<=4)
     "HT SCALE OK\n";
   else
@@ -591,6 +807,10 @@ U0 HtCorpusRun()
     "HT CORPUS FAIL manifest\n";
     return;
   }
+  //plan 012: keep the whole corpus batch single-core on core 0 (ht_fp called
+  //in a synchronous loop, not via the render task). Pause once for the whole
+  //batch; the nested HtInstallHoly/HtVisualDump pauses just bump the count.
+  HtRenderPause;
   ht_u.i_time=0.5;
   ht_u.res_x=640;
   ht_u.res_y=288;
@@ -669,6 +889,7 @@ corpus_next:;
   Free(man);
   "HT CORPUS DONE %d/%d\n",pass,n;
   ht_fp=ht_default_fp;		//park on the built-in shader for the screenshot
+  HtRenderResume;		//resume background render for the final frame
 }
 
 U8 *HtEditorSave(CDoc *doc)
@@ -836,6 +1057,38 @@ if (FileFind("E:/SCALE.TXT")) {
     Free(ht_scale_buf);
   }
 }
+//plan 012: shading-core count. Auto = mp_cnt; pin 1..mp_cnt via E:/CORES.TXT
+//(mirrors the SCALE.TXT block; host plumbing is HOLYTOY_CORES -> mkxfer.sh).
+//Values >mp_cnt clamp to mp_cnt with an HT CORES BADPIN line; junk => auto.
+U8 *ht_cores_buf,*ht_cores_p,ht_cores_tok[8];
+I64 ht_cores_sz,ht_cores_i=0,ht_cores_n;
+ht_render_cores=mp_cnt;
+if (FileFind("E:/CORES.TXT")) {
+  ht_cores_buf=FileRead("E:/CORES.TXT",&ht_cores_sz);
+  if (ht_cores_buf) {
+    ht_cores_p=ht_cores_buf;
+    while (*ht_cores_p==' ' || *ht_cores_p=='\t' ||
+           *ht_cores_p=='\n' || *ht_cores_p=='\r') ht_cores_p++;
+    while (*ht_cores_p && *ht_cores_p!=' ' && *ht_cores_p!='\t' &&
+           *ht_cores_p!='\n' && *ht_cores_p!='\r' && ht_cores_i<7)
+      ht_cores_tok[ht_cores_i++]=*ht_cores_p++;
+    ht_cores_tok[ht_cores_i]=0;
+    if (!StrCmp(ht_cores_tok,"auto"))
+      ht_render_cores=mp_cnt;
+    else {
+      ht_cores_n=Str2I64(ht_cores_tok);
+      if (ht_cores_n<1) {
+        ht_render_cores=mp_cnt;
+        "HT CORES BADPIN\n";
+      } else if (ht_cores_n>mp_cnt) {
+        ht_render_cores=mp_cnt;
+        "HT CORES BADPIN\n";
+      } else
+        ht_render_cores=ht_cores_n;
+    }
+    Free(ht_cores_buf);
+  }
+}
 StrCpy(ht_glsl_src,ht_glsl1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
@@ -852,6 +1105,21 @@ if (ht_gui) {
   ht_ac_was_on=AutoComplete(OFF);
   WinFocus(Fs);
 }
+//plan 012: allocate the offscreen double buffer (64-aligned base, 64-aligned
+//stride => band boundaries never share a cache line), capture the window
+//task for viewport geometry, then Spawn the render task on core 0 (-1). All
+//shared state it reads (LUTs, ht_fp, ht_render_cores, ht_u) is set above.
+I64 ht_fb_need=ht_fb_stride*HT_VIEW_H,ht_fb_base;
+ht_win_task=Fs;
+ht_fb[0].pix_raw=MAlloc(ht_fb_need+64);
+ht_fb_base=(ht_fb[0].pix_raw(I64)+63)&(~63);
+ht_fb[0].pix=ht_fb_base(U8 *);
+MemSet(ht_fb[0].pix,0,ht_fb_need);
+ht_fb[1].pix_raw=MAlloc(ht_fb_need+64);
+ht_fb_base=(ht_fb[1].pix_raw(I64)+63)&(~63);
+ht_fb[1].pix=ht_fb_base(U8 *);
+MemSet(ht_fb[1].pix,0,ht_fb_need);
+ht_render_task=Spawn(&HtRenderTask,NULL,"HT Render",-1,NULL,0x40000);
 Bool ht_had_shader=FALSE;
 if (FileFind("E:/CORPUS.TXT")) {
   //Batch measurement first, with no draw_it installed: rendering the
@@ -870,6 +1138,25 @@ if (FileFind("E:/CORPUS.TXT")) {
 				//run's job (keep the two modes separate)
   else
     HtSelfTest;
+}
+//plan 012 teardown. Only on GUI exit (ESC): HtInteract already popped our
+//draw_it via SettingsPop, so nothing blits ht_fb anymore -> drain any
+//in-flight frame, reap the render task, and free the buffers with no
+//use-after-free. In the HEADLESS paths (self-test / GLSL / corpus) we
+//deliberately leave the render task running and draw_it installed: the
+//winmgr keeps blitting the live, animating frame through guest/RUN.HC's
+//4 s picture hold (matching the pre-012 behavior the screenshot proofs rely
+//on), and the imminent Reboot reclaims everything.
+if (ht_gui) {
+  HtRenderPause;
+  ht_render_exit=TRUE;
+  HtRenderResume;
+  if (ht_render_task)
+    DeathWait(&ht_render_task);
+  Fs->draw_it=NULL;
+  ht_have_frame=FALSE;
+  if (ht_fb[0].pix_raw) Free(ht_fb[0].pix_raw);
+  if (ht_fb[1].pix_raw) Free(ht_fb[1].pix_raw);
 }
 if (ht_ac_was_on)
   AutoComplete(ON);

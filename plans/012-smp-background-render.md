@@ -1,6 +1,7 @@
 # Plan 012: SMP background render task (multicore shading fan-out)
 
-Status: TODO. Depends on plan 011 (reentrant ht_fp). Designed 2026-07-17
+Status: DONE (2026-07-17, branch plan-012-smp-render). Depends on plan 011
+(reentrant ht_fp). Designed 2026-07-17
 by an Opus 4.8 design agent; probe `run-20260717-151606-YVG02x` verified
 JobQue fan-out on cores 1-3, byte-identical multicore output (checksum
 match), 3.16x speedup on 3 workers, and throw isolation. `-smp 4` is
@@ -261,3 +262,59 @@ Budget used: 1 of 3 probe runs.
 2. **Per-frame `JobQue` allocation cost.** Each `JobQue` does an `ACAlloc(sizeof(CJob))` + queue insert + `MPInt` wake; `JobResGet`/`JobResScan` frees it. For 3 jobs/frame this is negligible vs multi-ms shading (unmeasured but bounded). If ever hot, a pre-allocated job-pool or persistent workers with a barrier could replace it — but that reintroduces the quiesce complexity this design avoids. Recommend measuring `ht_shade_ms` overhead at `1:1` on a cheap shader once implemented.
 3. **Load imbalance for spatially non-uniform shaders** (e.g. a raymarcher cheap in sky rows). One-band-per-core can leave a worker idle. The strip over-decomposition knob (`K*nb` contiguous strips) is the answer; deferred until a corpus shader demonstrates measurable imbalance.
 4. **`ht_render_cores` upper bound.** Pinned via `CORES.TXT` clamps to `mp_cnt` (=4 in CI). If `SMP` in `config.sh` ever changes, the SCALE proof's single-core pin keeps it robust, but proof 14's `CORES=4` literal should track `SMP`.
+## Completion evidence
+
+Implemented on branch `plan-012-smp-render` (base main @ 7fa12c2). All shading
+moved out of `HtDrawIt` into `HtRenderTask` (spawned once on core 0); the fan
+uses `JobQue(&HtShadeBandJob,&desc,1+k,0)` per band and `JobResGet` as the
+barrier, into a 64-aligned double buffer published by one word store. Deviations
+from the design body are noted below.
+
+### Done criteria — all met
+
+1. `HtDrawIt` no longer shades: it updates `ht_u` for the next snapshot and
+   blits `ht_fb[ht_front_idx].pix` + pane. Editor responsive during slow shades.
+2. Fan-out per the design: transient `JobQue` jobs, static contiguous row-bands
+   (one per worker core 1..nb), double buffer with atomic publish, nesting
+   pause/resume quiesce, single-core fallback with per-band `Yield`.
+3. `HOLYTOY_CORES` env -> `E:/CORES.TXT` pin (`mkxfer.sh`), `1..mp_cnt`/`auto`,
+   `>mp_cnt` clamps with `HT CORES BADPIN`. Mirrors the `SCALE.TXT` block.
+4. `make test` = **14 passed, 0 failed** (13 existing, unchanged assertions, +
+   new proof 14). Proof 14: `gradient.glsl` at `HOLYTOY_SCALE=4`, `CORES=1` vs
+   `CORES=4` -> identical viewport hash `6d5c42e03ecb2f002f8ba8316c4dfb94`.
+   Run dirs `out/runs/test-20260717-1616*` (incl. `-smp-c1`, `-smp-c4`).
+5. Measured `ht_shade_ms` (pane readout) on the heavy `tests/glsl/slow-loop.glsl`
+   (40000-iter fract(sin) loop), scale pinned so both configs do equal work:
+   - `HOLYTOY_SCALE=16`: CORES=1 ~1380 ms, CORES=4 ~437 ms -> **3.16x**.
+   - `HOLYTOY_SCALE=8` : CORES=1  5537 ms, CORES=4 1748 ms -> **3.17x**.
+   3 workers (cores 1-3), matching the probe's 3.16x prediction; >= 2.5x met.
+6. Corpus v2 visual **unchanged** from plan 010 (dumps single-core; `HtCorpusRun`
+   holds `HtRenderPause` for the whole batch). One-boot `tools/corpus_run.sh`
+   (RUN_DIR `out/runs/run-20260717-161906-MUHxkQ`): compile/install/exec
+   39/51, stratum A 39/39; visual 28/39 within tolerance with the same 11
+   fract(sin)-decorrelation FAILs (4lfGWr 4sfGWX 4tl3z4 MdlGz4 MtfGR4 XdsGWH
+   Xlt3Dn lds3D8 lsX3DH lsX3WH tlSSDV). Oracle fixture proof 13: 100% match.
+7. NOT merged to main (per task); merge is the coordinator's step.
+
+### Deviations from the design body (all documented in HT.HC)
+
+- `ht_render_pause` is a **nesting count**, not an `LBts`/`LBtr` bit, so a shader
+  swap (`HtInstallHoly`) inside an already-paused `HtCorpusRun` cannot resume it
+  early. `HtRenderPause`/`Resume` are defined ahead of `HtInstallHoly` (their
+  first caller) because HolyC resolves calls top-down.
+- The render task claims `ht_render_busy` **before** re-reading `ht_render_pause`
+  (the design set it after the pause check); this closes a race where a pauser
+  could slip past a just-starting frame.
+- Single-core fallback measures **pure shading ms** (sum of per-band deltas,
+  Yields excluded) so the adaptive controller behaves exactly like the validated
+  pre-012 inline path; multicore `ht_shade_ms` is the real fan-out wall time.
+  The render loop paces to ~30 fps (`Sleep(33-ms)`), which is also a guaranteed
+  yield point and avoids pegging the workers on cheap shaders.
+- `ht_fb_stride` is a fixed 64-aligned ceiling (`HT_FB_MAXW=1024`) rather than
+  derived from `max_vw`, because the window may not be laid out when the buffers
+  are allocated; `HtDrawIt`/the render task clamp `vw` to it. `CHtFrameBuf`
+  carries a `pix_raw` field for the pre-alignment `Free`.
+- Teardown (reap render task + free buffers) runs **only on GUI exit**. In the
+  headless paths the render task and `draw_it` are deliberately left running so
+  the winmgr keeps blitting the live, animating frame through RUN.HC's 4 s hold
+  (the pre-012 behavior the screenshot proofs depend on); Reboot reclaims all.
