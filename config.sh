@@ -16,8 +16,10 @@ QEMU=qemu-system-x86_64
 MEM=512
 MAX_RUNS=3                # concurrent VMs; each uses MEM MiB and ~1 TCG core
 RUN_QUEUE_TIMEOUT=300     # wait this long for any VM slot
-ACCEL_ARGS=""
-[ -e /dev/kvm ] && [ -w /dev/kvm ] && ACCEL_ARGS="-enable-kvm"
+SMP=4                     # guest vCPUs; TempleOS is SMP (core 0 owns the
+                          # winmgr, cores 1+ compute via Spawn target_cpu)
+ACCEL_ARGS="-smp $SMP"
+[ -e /dev/kvm ] && [ -w /dev/kvm ] && ACCEL_ARGS="-enable-kvm -smp $SMP"
 
 # Run-cycle timing (seconds)
 RUN_TIMEOUT="${RUN_TIMEOUT:-90}"  # hard kill for a normal run cycle; corpus
