@@ -42,7 +42,7 @@ done
 
 mkdir -p "$CHK" "$ROOT/images"
 QPID=""
-cleanup() { [ -n "$QPID" ] && kill "$QPID" 2>/dev/null; }
+cleanup() { [ -n "$QPID" ] && kill "$QPID" 2>/dev/null; true; }
 trap cleanup EXIT
 
 # Wait until STRING appears on the guest screen (case-insensitive).
