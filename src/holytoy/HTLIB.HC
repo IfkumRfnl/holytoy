@@ -416,6 +416,59 @@ F64 HtF32FromBits(I64 bits)
 //polynomial. Accuracy is the enemy -- a more accurate sine diverges from
 //llvmpipe's deliberately lossy F32 reduction. See plans/013.
 
+//--- plan 014: hardware F32 rounding via x87 precision control --------------
+//With CW precision control = 24-bit (CW bits 8-9 = 00) every FADD/FMUL/FDIV/
+//FSQRT rounds its result RNE to a 24-bit significand in-register, which the
+//PC24 self-test gate proves bit-identical to HtF32 for F32-normal-range
+//values. Generated code then runs plain float ops instead of the HtF32 call
+//chain (measured 13.3 -> 2.4 ns/op). The CW is task-local (Sched.HC
+//FXSAVE/FXRSTORs CTask.fpu_mmx), so shading tasks hold PC24 privately.
+//Exponent range stays extended: F32 overflow->inf and subnormal underflow do
+//not occur at the F32 boundary (documented deviation, corpus-measured).
+//ht_hwf32_mode gates the emitter; the gate clears it if PC24 misbehaves.
+
+Bool ht_hwf32_mode=TRUE;	//plan 014: PC24 hardware F32 (E:/HWF32.TXT=0
+				//or a failing HT PC24 gate turns it off)
+
+I64 HtPCSave24()
+{//save the x87 control word, set 24-bit precision control, return old CW.
+ //noreg pins the scratch to its stack slot: HolyC register-allocates plain
+ //locals, and the asm operand &x[RBP] addresses the slot, not the register.
+  I64 noreg cw;
+  I64 noreg cw2;
+  cw=0;
+  asm {FSTCW U16 &cw[RBP]}
+  cw2=cw&(~0x300);
+  asm {FLDCW U16 &cw2[RBP]}
+  return cw&0xFFFF;
+}
+
+I64 HtPCSave64()
+{//save the x87 control word, set 64-bit precision control (TempleOS default),
+ //return old CW. Used by helpers whose plan-013 numerics need exact F64
+ //intermediates (Cephes fma chains) while callers run at PC24.
+  I64 noreg cw;
+  I64 noreg cw2;
+  cw=0;
+  asm {FSTCW U16 &cw[RBP]}
+  cw2=cw|0x300;
+  asm {FLDCW U16 &cw2[RBP]}
+  return cw&0xFFFF;
+}
+
+U0 HtPCRestore(I64 old)
+{
+  I64 noreg cw;
+  cw=old&0xFFFF;
+  asm {FLDCW U16 &cw[RBP]}
+}
+
+//plan 014: shader literal table. The emitter's hw mode replaces runtime
+//HtF32(<literal>) calls with ht_glit[k] loads; generated HtShaderInit fills
+//the slots once per install (ht_glit[k]=HtF32(<literal>);).
+#define HT_GLIT_MAX	3072
+F64 ht_glit[HT_GLIT_MAX];
+
 I64 HtF32BitsRNE(F64 x)
 {//IEEE-754 round-to-nearest-even of x into a 32-bit float bit pattern.
  //Correct on normals, subnormals, overflow, inf and NaN (self-test gated).
@@ -525,8 +578,11 @@ F64 HtSinCosF32(F64 x,I64 want_sin)
  //arithmetic step is done in F64 and rounded to F32; each fma is HtFmaF32.
  //cos is NOT sin(x+pi/2): its quadrant/sign logic differs (validated vs
  //tools/glsl_ref.py). See plans/013 open question 5.
+ //plan 014: forces PC64 internally -- the fma reproduction needs exact F64
+ //products, and hw-mode callers run at PC24.
   F64 xa,prod,y,xr,z,ys,yc,w,a,b,c,d,r;
-  I64 emm2_i,emm2_add,emm2_and,emm2c,sgn,poly_sin;
+  I64 emm2_i,emm2_add,emm2_and,emm2c,sgn,poly_sin,htpc;
+  htpc=HtPCSave64;
   xa=HtF32(Abs(x));
   prod=HtF32(xa*htf_fopi);
   emm2_i=ToI64(prod);			//FPToSI: truncate toward zero (xa>=0)
@@ -564,6 +620,7 @@ F64 HtSinCosF32(F64 x,I64 want_sin)
   if (poly_sin) r=ys;
   else r=yc;
   if (sgn) r=-r;
+  HtPCRestore(htpc);
   return r;
 }
 
@@ -780,6 +837,321 @@ U0 HtMMulMF32(F64 *out,F64 *a,F64 *b,I64 n)
     }
 }
 
+//--- plan 014: Hf helper twins (PC24 callers, no software rounding) ---------
+//Same formulas and associativity as the F32 family above; every arithmetic
+//op is rounded by the caller's PC24 control word instead of HtF32 calls.
+//Division/sqrt become single-rounded (exactly llvmpipe's fdiv/sqrtss; the
+//F32 family double-rounds those through F64 -- a documented ~1/2^29 1-ULP
+//artifact this path removes).
+
+F64 HtFractHf(F64 x)
+{
+  return x-Floor(x);
+}
+
+F64 HtModHf(F64 x,F64 y)
+{//x - y*floor(x/y); PC24 rounds each op.
+  return x-y*Floor(x/y);
+}
+
+F64 HtInvSqrtHf(F64 x)
+{//gallivm inversesqrt = rcp(sqrt(x)); both ops PC24-rounded.
+  return 1.0/Sqrt(x);
+}
+
+F64 HtMixHf(F64 a,F64 b,F64 t)
+{//GLSL mix = a + (b-a)*t, per-op.
+  return a+(b-a)*t;
+}
+
+F64 HtV2DotHf(CHtV2 *a,CHtV2 *b)
+{
+  return a->x*b->x+a->y*b->y;
+}
+
+F64 HtV3DotHf(CHtV3 *a,CHtV3 *b)
+{//right-associative like the F32 family (llvmpipe-verified order)
+  F64 s=a->y*b->y+a->z*b->z;
+  return a->x*b->x+s;
+}
+
+F64 HtV4DotHf(CHtV4 *a,CHtV4 *b)
+{
+  F64 s=a->z*b->z+a->w*b->w;
+  s=a->y*b->y+s;
+  return a->x*b->x+s;
+}
+
+F64 HtV2LenHf(CHtV2 *a)
+{
+  return Sqrt(HtV2DotHf(a,a));
+}
+
+F64 HtV3LenHf(CHtV3 *a)
+{
+  return Sqrt(HtV3DotHf(a,a));
+}
+
+F64 HtV4LenHf(CHtV4 *a)
+{
+  return Sqrt(HtV4DotHf(a,a));
+}
+
+F64 HtV2DistHf(CHtV2 *a,CHtV2 *b)
+{
+  CHtV2 d;
+  d.x=a->x-b->x;
+  d.y=a->y-b->y;
+  return HtV2LenHf(&d);
+}
+
+F64 HtV3DistHf(CHtV3 *a,CHtV3 *b)
+{
+  CHtV3 d;
+  d.x=a->x-b->x;
+  d.y=a->y-b->y;
+  d.z=a->z-b->z;
+  return HtV3LenHf(&d);
+}
+
+F64 HtV4DistHf(CHtV4 *a,CHtV4 *b)
+{
+  CHtV4 d;
+  d.x=a->x-b->x;
+  d.y=a->y-b->y;
+  d.z=a->z-b->z;
+  d.w=a->w-b->w;
+  return HtV4LenHf(&d);
+}
+
+U0 HtV2NormHf(CHtV2 *out,CHtV2 *a)
+{//GLSL normalize = v * inversesqrt(dot(v,v))
+  F64 s=HtInvSqrtHf(HtV2DotHf(a,a));
+  out->x=a->x*s;
+  out->y=a->y*s;
+}
+
+U0 HtV3NormHf(CHtV3 *out,CHtV3 *a)
+{
+  F64 s=HtInvSqrtHf(HtV3DotHf(a,a));
+  out->x=a->x*s;
+  out->y=a->y*s;
+  out->z=a->z*s;
+}
+
+U0 HtV4NormHf(CHtV4 *out,CHtV4 *a)
+{
+  F64 s=HtInvSqrtHf(HtV4DotHf(a,a));
+  out->x=a->x*s;
+  out->y=a->y*s;
+  out->z=a->z*s;
+  out->w=a->w*s;
+}
+
+U0 HtV3CrossHf(CHtV3 *out,CHtV3 *a,CHtV3 *b)
+{
+  F64 x=a->y*b->z-a->z*b->y,
+      y=a->z*b->x-a->x*b->z,
+      z=a->x*b->y-a->y*b->x;
+  out->x=x;
+  out->y=y;
+  out->z=z;
+}
+
+U0 HtV2ReflectHf(CHtV2 *out,CHtV2 *i,CHtV2 *n)
+{//i - 2*dot(n,i)*n
+  F64 d=2.0*HtV2DotHf(n,i);
+  out->x=i->x-d*n->x;
+  out->y=i->y-d*n->y;
+}
+
+U0 HtV3ReflectHf(CHtV3 *out,CHtV3 *i,CHtV3 *n)
+{
+  F64 d=2.0*HtV3DotHf(n,i);
+  out->x=i->x-d*n->x;
+  out->y=i->y-d*n->y;
+  out->z=i->z-d*n->z;
+}
+
+U0 HtM2MulVHf(CHtV2 *out,CHtM2 *m,CHtV2 *v)
+{
+  F64 x=m->m[0]*v->x,y=m->m[1]*v->x;
+  x=x+m->m[2]*v->y;
+  y=y+m->m[3]*v->y;
+  out->x=x;
+  out->y=y;
+}
+
+U0 HtVMulM2Hf(CHtV2 *out,CHtV2 *v,CHtM2 *m)
+{
+  F64 x=m->m[0]*v->x,y=m->m[2]*v->x;
+  x=x+m->m[1]*v->y;
+  y=y+m->m[3]*v->y;
+  out->x=x;
+  out->y=y;
+}
+
+U0 HtM3MulVHf(CHtV3 *out,CHtM3 *m,CHtV3 *v)
+{
+  F64 sx,sy,sz;
+  sx=m->m[3]*v->y+m->m[6]*v->z;
+  out->x=m->m[0]*v->x+sx;
+  sy=m->m[4]*v->y+m->m[7]*v->z;
+  out->y=m->m[1]*v->x+sy;
+  sz=m->m[5]*v->y+m->m[8]*v->z;
+  out->z=m->m[2]*v->x+sz;
+}
+
+U0 HtVMulM3Hf(CHtV3 *out,CHtV3 *v,CHtM3 *m)
+{
+  F64 sx,sy,sz;
+  sx=m->m[1]*v->y+m->m[2]*v->z;
+  out->x=m->m[0]*v->x+sx;
+  sy=m->m[4]*v->y+m->m[5]*v->z;
+  out->y=m->m[3]*v->x+sy;
+  sz=m->m[7]*v->y+m->m[8]*v->z;
+  out->z=m->m[6]*v->x+sz;
+}
+
+U0 HtM4MulVHf(CHtV4 *out,CHtM4 *m,CHtV4 *v)
+{
+  F64 sx,sy,sz,sw;
+  sx=m->m[8]*v->z+m->m[12]*v->w;
+  sx=m->m[4]*v->y+sx;
+  out->x=m->m[0]*v->x+sx;
+  sy=m->m[9]*v->z+m->m[13]*v->w;
+  sy=m->m[5]*v->y+sy;
+  out->y=m->m[1]*v->x+sy;
+  sz=m->m[10]*v->z+m->m[14]*v->w;
+  sz=m->m[6]*v->y+sz;
+  out->z=m->m[2]*v->x+sz;
+  sw=m->m[11]*v->z+m->m[15]*v->w;
+  sw=m->m[7]*v->y+sw;
+  out->w=m->m[3]*v->x+sw;
+}
+
+U0 HtVMulM4Hf(CHtV4 *out,CHtV4 *v,CHtM4 *m)
+{
+  F64 sx,sy,sz,sw;
+  sx=m->m[2]*v->z+m->m[3]*v->w;
+  sx=m->m[1]*v->y+sx;
+  out->x=m->m[0]*v->x+sx;
+  sy=m->m[6]*v->z+m->m[7]*v->w;
+  sy=m->m[5]*v->y+sy;
+  out->y=m->m[4]*v->x+sy;
+  sz=m->m[10]*v->z+m->m[11]*v->w;
+  sz=m->m[9]*v->y+sz;
+  out->z=m->m[8]*v->x+sz;
+  sw=m->m[14]*v->z+m->m[15]*v->w;
+  sw=m->m[13]*v->y+sw;
+  out->w=m->m[12]*v->x+sw;
+}
+
+U0 HtMMulMHf(F64 *out,F64 *a,F64 *b,I64 n)
+{//out = a*b, n x n column-major, right-assoc; out must not alias.
+  I64 c,r,k;
+  F64 s;
+  for (c=0;c<n;c++)
+    for (r=0;r<n;r++) {
+      s=a[(n-1)*n+r]*b[c*n+(n-1)];
+      for (k=n-2;k>=0;k--)
+        s=a[k*n+r]*b[c*n+k]+s;
+      out[c*n+r]=s;
+    }
+}
+
+//plan 014: non-replicated transcendentals must keep their plan-013 numerics
+//(computed at TempleOS's default 64-bit precision, no result rounding), so
+//under PC24 callers they force PC64 internally.
+
+F64 HtExpHf(F64 x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=Exp(x);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtLnHf(F64 x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=Ln(x);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtLog2Hf(F64 x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=Log2(x);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtExp2Hf(F64 x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=HtExp2F(x);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtPowHf(F64 x,F64 y)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=Pow(x,y);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtTanHf(F64 x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=HtTanF(x);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtASinHf(F64 x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=HtASinF(x);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtACosHf(F64 x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=HtACosF(x);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtAtanHf(F64 y_over_x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=HtAtanF(y_over_x);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtAtan2Hf(F64 y,F64 x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=HtAtan2F(y,x);
+  HtPCRestore(htpc);
+  return r;
+}
+
+F64 HtSStepHf(F64 e0,F64 e1,F64 x)
+{
+  I64 htpc=HtPCSave64;
+  F64 r=HtSStepF(e0,e1,x);
+  HtPCRestore(htpc);
+  return r;
+}
+
 U0 HtLibSelfTest()
 {//Accuracy and semantics gate; the holytoy proof greps for HT LIB OK.
   I64 i,ok=TRUE,ok2=TRUE;
@@ -818,4 +1190,40 @@ U0 HtLibSelfTest()
     "HT F32 OK\n";
   else
     "HT F32 FAIL\n";
+  //plan 014: PC24 hardware-rounding gate. Native mul/add/div under 24-bit
+  //precision control must bit-match HtF32 (RNE incl. ties), and 80-bit
+  //intermediates must be gone. On failure fall back to the plan-013
+  //software rounding path BEFORE any shader is compiled.
+  {
+    I64 htpc,k,seed,raw,ok3=TRUE;
+    F64 x,r,one,zero,tiny;
+    one=1.0;
+    zero=0.0;
+    raw=(1023-60)<<52;			//2^-60
+    tiny=*(&raw)(F64 *);
+    seed=88172645463325252;
+    htpc=HtPCSave24;
+    if ((one+tiny)-one!=zero) ok3=FALSE;	//PC24 must round 1+2^-60 to 1
+    for (k=0;k<4096;k++) {
+      seed=seed*6364136223846793005+1442695040888963407;
+      if (k%3==0)			//exact RNE tie patterns
+        raw=((seed>>1&0x7FFF)%240-120+1023)<<52|
+            ((seed>>13)&0xFFFFFF)<<29|0x10000000;
+      else				//F32 normal range
+        raw=((seed>>1&0x7FFF)%252-125+1023)<<52|(seed>>5)&0xFFFFFFFFFFFFF;
+      if (seed&1) raw=raw|0x8000000000000000;
+      x=*(&raw)(F64 *);
+      r=HtF32(x);			//integer path, PC-independent
+      if (x*one!=r) ok3=FALSE;
+      if (x+zero!=r) ok3=FALSE;
+      if (x/one!=r) ok3=FALSE;
+    }
+    HtPCRestore(htpc);
+    if (ok3)
+      "HT PC24 OK\n";
+    else {
+      ht_hwf32_mode=FALSE;
+      "HT PC24 SWFALLBACK\n";
+    }
+  }
 }

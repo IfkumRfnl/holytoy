@@ -1113,6 +1113,20 @@ if (FileFind("E:/F32.TXT")) {
     Free(f32b);
   }
 }
+//plan 014: HOLYTOY_HWF32=0 escape hatch (E:/HWF32.TXT holding "0") keeps F32
+//semantics but reverts to the plan-013 software rounding path for A/B runs.
+if (FileFind("E:/HWF32.TXT")) {
+  U8 *hwb;
+  I64 hwsz;
+  hwb=FileRead("E:/HWF32.TXT",&hwsz);
+  if (hwb) {
+    if (hwsz>0 && hwb[0]=='0') {
+      ht_hwf32_mode=FALSE;
+      "HT HWF32 MODE OFF\n";
+    }
+    Free(hwb);
+  }
+}
 StrCpy(ht_glsl_src,ht_glsl1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;

@@ -74,6 +74,11 @@ fi
 if [ "${HOLYTOY_F32:-}" = "0" ]; then
     echo 0 | mcopy -o - x:/F32.TXT
 fi
+# plan 014: HOLYTOY_HWF32=0 keeps F32 semantics but reverts to the plan-013
+# software rounding path (A/B escape hatch for the PC24 hardware mode).
+if [ "${HOLYTOY_HWF32:-}" = "0" ]; then
+    echo 0 | mcopy -o - x:/HWF32.TXT
+fi
 # Visual-oracle dump request: HT.HC writes V00A/V00B sample DATs after a
 # successful single-shader GLSL compile (plan 010).
 if [ -n "${HOLYTOY_VISDUMP:-}" ]; then
