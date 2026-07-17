@@ -15,6 +15,7 @@ class CHtSym
   I64 const_i;			//folded integer value (const int symbols)
   Bool has_const_i;
   Bool dead;			//out of scope
+  Bool per_inv;			//global lives in CHtCtx (per-invocation), plan 011
 };
 
 //NAME binds
@@ -259,6 +260,61 @@ U0 HtScopeExit(CHtProgram *p,I64 save)
   I64 i;
   for (i=save;i<p->sym_count;i++)
     p->sym[i].dead=TRUE;
+}
+
+Bool HtGlobalPerInvocation(CHtProgram *p,I64 s)
+{//plan 011: does global symbol s live in the per-invocation CHtCtx?
+  if (s<0 || s>=p->sym_count) return FALSE;
+  if (p->sym[s].kind!=HT_SYM_GLOBAL) return FALSE;
+  return p->sym[s].per_inv;
+}
+
+extern Bool HtInitStaticSafe(CHtProgram *p,I64 i);
+
+Bool HtInitStaticSafeChain(CHtProgram *p,I64 i)
+{//every element/argument of a next-linked chain is static-safe
+  while (i>=0) {
+    if (!HtInitStaticSafe(p,i)) return FALSE;
+    i=p->node[i].next;
+  }
+  return TRUE;
+}
+
+Bool HtInitStaticSafe(CHtProgram *p,I64 i)
+{//plan 011 sec1: can this global initializer run once at install (shared),
+ //or must it re-run per invocation?  Recursive over the initializer AST;
+ //true only for constants and references to earlier shared-read-only globals.
+  CHtAst *n;
+  if (i<0) return TRUE;			//no initializer: trivially safe
+  n=&p->node[i];
+  if (n->kind==HT_AST_NUMBER) return TRUE;
+  if (n->kind==HT_AST_NAME) {
+    if (n->bind==HT_BIND_TRUE || n->bind==HT_BIND_FALSE) return TRUE;
+    if (n->bind==HT_BIND_SYM) {
+      if (p->sym[n->c].kind!=HT_SYM_GLOBAL) return FALSE;
+      return !p->sym[n->c].per_inv;	//earlier shared-read-only global
+    }
+    return FALSE;			//uniforms and everything else
+  }
+  if (n->kind==HT_AST_UNARY)
+    return HtInitStaticSafe(p,n->a);
+  if (n->kind==HT_AST_MEMBER)
+    return HtInitStaticSafe(p,n->a);
+  if (n->kind==HT_AST_BINARY || n->kind==HT_AST_INDEX ||
+      n->kind==HT_AST_SEQ)
+    return HtInitStaticSafe(p,n->a) && HtInitStaticSafe(p,n->b);
+  if (n->kind==HT_AST_TERNARY)
+    return HtInitStaticSafe(p,n->a) && HtInitStaticSafe(p,n->b) &&
+           HtInitStaticSafe(p,n->c);
+  if (n->kind==HT_AST_CALL) {
+    if (n->bind==HT_CALL_CTOR || n->bind==HT_CALL_BI ||
+        n->bind==HT_CALL_STRUCT)
+      return HtInitStaticSafeChain(p,n->b);
+    return FALSE;			//HT_CALL_USER
+  }
+  if (n->kind==HT_AST_ARRCTOR)
+    return HtInitStaticSafeChain(p,n->b);
+  return FALSE;
 }
 
 //--- integer constant folding ---------------------------------------------------
@@ -1399,6 +1455,14 @@ Bool HtLower(CHtProgram *p)
     n=&p->node[i];
     if (n->kind==HT_AST_DECL) {
       if (!HtSemaDecl(&se,i,HT_SYM_GLOBAL)) break;
+      //plan 011: classify in declaration order. A const global with a
+      //static-safe initializer stays a shared process global; everything
+      //else (mutable, or const-from-uniform) moves into the per-invocation
+      //CHtCtx. n->c is the symbol index set by HtSemaDecl.
+      if ((n->flags&HTF_CONST) && HtInitStaticSafe(p,n->a))
+        p->sym[n->c].per_inv=FALSE;
+      else
+        p->sym[n->c].per_inv=TRUE;
     } else if (n->kind==HT_AST_FUNC && n->b>=0) {
       se.fn=i;
       se.loop_depth=0;
