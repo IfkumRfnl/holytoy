@@ -55,6 +55,10 @@ class CHtEmitter
   I64 *needs_ctx;	//plan 011: per-func-node, threads CHtCtx *ctx
   Bool has_ctx;		//plan 011: any per-invocation global exists
   Bool f32;		//plan 013: emit llvmpipe-reproducing F32 semantics
+  Bool hw;		//plan 014: PC24 hardware rounding (plain float ops,
+			//ht_glit literal table, Hf helper family)
+  U8 **glit_txt;	//plan 014: per-shader literal texts (StrNew copies)
+  I64 glit_cnt;
 };
 
 //plan 013: F32-semantics mode default (ON). HT.HC flips it off from the
@@ -289,9 +293,25 @@ U0 HtEmNumText(CHtEmitter *e,I64 tok,U8 *buf)
   //plan 013: in F32 mode wrap float literals so the constant is used as an
   //exact F32 value (HtF32 returns the exact F64 image of the rounded F32),
   //keeping downstream products exact-in-F64. Non-float literals are unchanged.
-  if (e->f32)
+  //plan 014 (hw mode): the runtime call becomes an ht_glit[k] load; the slots
+  //are filled once per install by the generated HtLitInit (same HtF32 value).
+  if (e->f32) {
+    if (e->hw && e->glit_txt) {
+      I64 k=0;
+      while (k<e->glit_cnt && StrCmp(e->glit_txt[k],m0))
+        k++;
+      if (k==e->glit_cnt && e->glit_cnt<HT_GLIT_MAX) {
+        e->glit_txt[k]=StrNew(m0);
+        e->glit_cnt++;
+      }
+      if (k<e->glit_cnt) {
+        StrPrint(buf,"ht_glit[%d]",k);
+        return;
+      }
+      //table full: fall back to the runtime call for the overflow literals
+    }
     StrPrint(buf,"HtF32(%s)",m0);
-  else
+  } else
     StrCpy(buf,m0);
 }
 
@@ -560,9 +580,9 @@ U0 HtEmBinComp(CHtEmitter *e,CHtVal *out,CHtVal *a,CHtVal *b,U8 *op,
     HtValComp(e,b,c,y);
     if (mask)
       HtOutF(e,"%s=(((%s)%s(%s))&0xFFFFFFFF);\n",d,x,op,y);
-    else if (f)
+    else if (f && !e->hw)
       HtOutF(e,"%s=HtF32((%s)%s(%s));\n",d,x,op,y);
-    else
+    else	//plan 014 hw mode: the caller's PC24 CW rounds the op
       HtOutF(e,"%s=((%s)%s(%s));\n",d,x,op,y);
   }
 }
@@ -577,7 +597,10 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
   CHtLexer *l=p->lex;
   Bool mask=HtElemIsUint(n->type);
   U8 *fs="";			//plan 013: F32 suffix for matrix helpers
-  if (e->f32) fs="F32";
+  if (e->f32) {
+    if (e->hw) fs="Hf";		//plan 014: PC24-native twins
+    else fs="F32";
+  }
   HtTokText(l,n->tok,op,4);
   //short-circuit logical ops
   if (HtTokEq(l,n->tok,"&&") || HtTokEq(l,n->tok,"||")) {
@@ -673,7 +696,7 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
     HtNewTmp(e,n->type,&t);
     if (mask)
       HtOutF(e,"%s=(((%s)%s(%s))&0xFFFFFFFF);\n",t.text,a.text,op,b.text);
-    else if (e->f32 && rk==HTT_FLOAT)	//plan 013: round float arithmetic
+    else if (e->f32 && !e->hw && rk==HTT_FLOAT)	//plan 013: round float arith
       HtOutF(e,"%s=HtF32((%s)%s(%s));\n",t.text,a.text,op,b.text);
     else
       HtOutF(e,"%s=((%s)%s(%s));\n",t.text,a.text,op,b.text);
@@ -885,7 +908,10 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   U8 d[112],x[112],y[112],pa[112],pb[112],pc[112];
   U8 *fn1=NULL;
   U8 *fs="";		//plan 013: F32 suffix for cross-component helpers
-  if (e->f32) fs="F32";
+  if (e->f32) {
+    if (e->hw) fs="Hf";	//plan 014: PC24-native twins
+    else fs="F32";
+  }
   while (arg>=0 && n_args<4) {
     HtEmExpr(e,arg,&av[n_args]);
     av[n_args].type=p->node[arg].type;
@@ -895,22 +921,34 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   //simple componentwise 1-arg float builtins. plan 013: in F32 mode route
   //sin/cos to the gallivm Cephes-F32 replica and wrap sqrt/inversesqrt/fract
   //so the result is rounded to F32 (the design's builtin table).
+  //plan 014 (hw mode): sqrt is a bare FSQRT (PC24 rounds it exactly like
+  //llvmpipe's sqrtss); fract/mod/mix/inversesqrt use the Hf twins; the
+  //non-replicated kernel transcendentals use Hf wrappers that force PC64
+  //internally so their numerics stay bit-identical to the sw path.
   if (bi==HT_BI_SIN) { if (e->f32) fn1="HtSinF32"; else fn1="HtSinF"; }
   else if (bi==HT_BI_COS) { if (e->f32) fn1="HtCosF32"; else fn1="HtCosF"; }
-  else if (bi==HT_BI_TAN) fn1="HtTanF";
-  else if (bi==HT_BI_ASIN) fn1="HtASinF";
-  else if (bi==HT_BI_ACOS) fn1="HtACosF";
-  else if (bi==HT_BI_EXP) fn1="Exp";
-  else if (bi==HT_BI_LOG) fn1="Ln";
-  else if (bi==HT_BI_EXP2) fn1="HtExp2F";
-  else if (bi==HT_BI_LOG2) fn1="Log2";
-  else if (bi==HT_BI_SQRT) { if (e->f32) fn1="HtSqrtF32"; else fn1="Sqrt"; }
+  else if (bi==HT_BI_TAN) { if (e->f32 && e->hw) fn1="HtTanHf"; else fn1="HtTanF"; }
+  else if (bi==HT_BI_ASIN) { if (e->f32 && e->hw) fn1="HtASinHf"; else fn1="HtASinF"; }
+  else if (bi==HT_BI_ACOS) { if (e->f32 && e->hw) fn1="HtACosHf"; else fn1="HtACosF"; }
+  else if (bi==HT_BI_EXP) { if (e->f32 && e->hw) fn1="HtExpHf"; else fn1="Exp"; }
+  else if (bi==HT_BI_LOG) { if (e->f32 && e->hw) fn1="HtLnHf"; else fn1="Ln"; }
+  else if (bi==HT_BI_EXP2) { if (e->f32 && e->hw) fn1="HtExp2Hf"; else fn1="HtExp2F"; }
+  else if (bi==HT_BI_LOG2) { if (e->f32 && e->hw) fn1="HtLog2Hf"; else fn1="Log2"; }
+  else if (bi==HT_BI_SQRT) {
+    if (e->f32 && !e->hw) fn1="HtSqrtF32"; else fn1="Sqrt";
+  }
   else if (bi==HT_BI_INVSQRT) {
-    if (e->f32) fn1="HtInvSqrtF32"; else fn1="HtInvSqrt";
+    if (e->f32) {
+      if (e->hw) fn1="HtInvSqrtHf"; else fn1="HtInvSqrtF32";
+    } else fn1="HtInvSqrt";
   }
   else if (bi==HT_BI_FLOOR) fn1="Floor";
   else if (bi==HT_BI_CEIL) fn1="Ceil";
-  else if (bi==HT_BI_FRACT) { if (e->f32) fn1="HtFractF32"; else fn1="HtFract"; }
+  else if (bi==HT_BI_FRACT) {
+    if (e->f32) {
+      if (e->hw) fn1="HtFractHf"; else fn1="HtFractF32";
+    } else fn1="HtFract";
+  }
   else if (bi==HT_BI_ROUND) fn1="Round";
   else if (bi==HT_BI_TRUNC) fn1="Trunc";
   if (fn1) {
@@ -947,16 +985,27 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   }
   if (bi==HT_BI_ATAN) {
     HtNewTmp(e,n->type,&t);
-    if (n_args==1)
-      HtEmCompwise1(e,&t,&av[0],"HtAtanF");
-    else
-      HtEmCompwise2(e,&t,&av[0],&av[1],"HtAtan2F");
+    if (n_args==1) {
+      if (e->f32 && e->hw)
+        HtEmCompwise1(e,&t,&av[0],"HtAtanHf");
+      else
+        HtEmCompwise1(e,&t,&av[0],"HtAtanF");
+    } else {
+      if (e->f32 && e->hw)
+        HtEmCompwise2(e,&t,&av[0],&av[1],"HtAtan2Hf");
+      else
+        HtEmCompwise2(e,&t,&av[0],&av[1],"HtAtan2F");
+    }
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }
   if (bi==HT_BI_POW || bi==HT_BI_MOD) {
     HtNewTmp(e,n->type,&t);
-    if (bi==HT_BI_POW) HtEmCompwise2(e,&t,&av[0],&av[1],"Pow");
+    if (bi==HT_BI_POW) {
+      if (e->f32 && e->hw) HtEmCompwise2(e,&t,&av[0],&av[1],"HtPowHf");
+      else HtEmCompwise2(e,&t,&av[0],&av[1],"Pow");
+    }
+    else if (e->f32 && e->hw) HtEmCompwise2(e,&t,&av[0],&av[1],"HtModHf");
     else if (e->f32) HtEmCompwise2(e,&t,&av[0],&av[1],"HtModF32");
     else HtEmCompwise2(e,&t,&av[0],&av[1],"HtModF");
     MemCpy(out,&t,sizeof(CHtVal));
@@ -985,7 +1034,8 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   }
   if (bi==HT_BI_MIX) {
     HtNewTmp(e,n->type,&t);
-    if (e->f32) HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixF32");
+    if (e->f32 && e->hw) HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixHf");
+    else if (e->f32) HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixF32");
     else HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixF");
     MemCpy(out,&t,sizeof(CHtVal));
     return;
@@ -998,7 +1048,10 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   }
   if (bi==HT_BI_SSTEP) {
     HtNewTmp(e,n->type,&t);
-    HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtSStepF");
+    if (e->f32 && e->hw)
+      HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtSStepHf");
+    else
+      HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtSStepF");
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }
@@ -1485,7 +1538,10 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
       U8 op2[4],pa2[112],pb2[112],pd2[112];
       Bool mask=HtElemIsUint(lv.type);
       U8 *fs="";			//plan 013: F32 suffix (HolyC has no ternary)
-      if (e->f32) fs="F32";
+      if (e->f32) {
+        if (e->hw) fs="Hf";		//plan 014: PC24-native twins
+        else fs="F32";
+      }
       op2[0]=op[0];			//first char is the operator
       op2[1]=0;
       if (op[0]=='<' || op[0]=='>') {
@@ -1499,7 +1555,7 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
         if (mask)
           HtOutF(e,"%s=(((%s)%s(%s))&0xFFFFFFFF);\n",
                  res.text,cur.text,op2,b.text);
-        else if (e->f32 && k==HTT_FLOAT)	//plan 013: round float result
+        else if (e->f32 && !e->hw && k==HTT_FLOAT)	//plan 013: round result
           HtOutF(e,"%s=HtF32((%s)%s(%s));\n",res.text,cur.text,op2,b.text);
         else
           HtOutF(e,"%s=((%s)%s(%s));\n",res.text,cur.text,op2,b.text);
@@ -2017,6 +2073,11 @@ U8 *HtEmit(CHtProgram *p)
   MemSet(&e,0,sizeof(CHtEmitter));
   e.prog=p;
   e.f32=ht_f32_mode;		//plan 013: F32 semantics (default ON)
+  //plan 014: PC24 hardware rounding (default ON; HWF32.TXT knob or a failed
+  //HT PC24 self-test gate clears ht_hwf32_mode before any compile).
+  e.hw=ht_f32_mode && ht_hwf32_mode;
+  if (e.hw)
+    e.glit_txt=CAlloc(HT_GLIT_MAX*sizeof(U8 *));
   e.cap=p->lex->src_len*8+4096;
   e.buf=MAlloc(e.cap);
   e.buf[0]=0;
@@ -2107,17 +2168,25 @@ U8 *HtEmit(CHtProgram *p)
     }
     HtOut(&e,"}\n");
   }
-  //MainImage ABI glue (plan 011 signature; reentrant, no stamp block)
+  //MainImage ABI glue (plan 011 signature; reentrant, no stamp block).
+  //plan 014 (hw mode): MainImage is the single choke point through which the
+  //SMP workers, exec probes and visual dumps invoke the shader, so it owns
+  //the PC24 window (CW is task-local; save/restore costs ~11 ns).
   if (!*p->error) {
     HtFuncName(&e,p->main_node,fname);
     HtOut(&e,
       "U0 MainImage(F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n{\n"
       "  CHtV2 htg_fc;\n  CHtV4 htg_col;\n");
+    if (e.hw)
+      HtOut(&e,"  I64 htpc;\n");
     if (e.has_ctx)
       HtOut(&e,
         "  CHtCtx ctx_store;\n"
-        "  CHtCtx *ctx=&ctx_store;\n"
-        "  HtCtxInit(ctx);\n");
+        "  CHtCtx *ctx=&ctx_store;\n");
+    if (e.hw)
+      HtOut(&e,"  htpc=HtPCSave24;\n");
+    if (e.has_ctx)
+      HtOut(&e,"  HtCtxInit(ctx);\n");
     HtOut(&e,
       "  htg_fc.x=frag_x;\n  htg_fc.y=frag_y;\n"
       "  htg_col.x=0.0;\n  htg_col.y=0.0;\n"
@@ -2126,13 +2195,19 @@ U8 *HtEmit(CHtProgram *p)
       HtOutF(&e,"  %s(ctx,&htg_col,&htg_fc);\n",fname);
     else
       HtOutF(&e,"  %s(&htg_col,&htg_fc);\n",fname);
+    if (e.hw)
+      HtOut(&e,"  HtPCRestore(htpc);\n");
     HtOut(&e,
       "  out_color->r=htg_col.x;\n"
       "  out_color->g=htg_col.y;\n"
       "  out_color->b=htg_col.z;\n"
       "  out_color->a=htg_col.w;\n}\n");
-    //shared-const global initializers, in declaration order (may be empty)
+    //shared-const global initializers, in declaration order (may be empty).
+    //plan 014: initializer expressions are shader code, so they run under
+    //PC24 too.
     HtOut(&e,"U0 HtShaderInit()\n{\n");
+    if (e.hw)
+      HtOut(&e,"I64 htpc=HtPCSave24;\n");
     i=p->root;
     while (i>=0 && !*p->error) {
       n=&p->node[i];
@@ -2140,9 +2215,27 @@ U8 *HtEmit(CHtProgram *p)
         HtEmDeclInit(&e,i);
       i=n->next;
     }
-    HtOut(&e,"}\nHtShaderInit;\n");
+    if (e.hw)
+      HtOut(&e,"HtPCRestore(htpc);\n");
+    HtOut(&e,"}\n");
+    //plan 014: literal table fill. Emitted LAST (every literal is known by
+    //now, including those inside HtCtxInit and HtShaderInit) but CALLED
+    //FIRST so ht_glit[] is live before any initializer reads it. HtF32 is
+    //integer-only and PC-independent.
+    if (e.hw) {
+      HtOut(&e,"U0 HtLitInit()\n{\n");
+      for (i=0;i<e.glit_cnt;i++)
+        HtOutF(&e,"ht_glit[%d]=HtF32(%s);\n",i,e.glit_txt[i]);
+      HtOut(&e,"}\nHtLitInit;\n");
+    }
+    HtOut(&e,"HtShaderInit;\n");
   }
   Free(e.needs_ctx);
+  if (e.glit_txt) {
+    for (i=0;i<e.glit_cnt;i++)
+      Free(e.glit_txt[i]);
+    Free(e.glit_txt);
+  }
   if (*p->error) {
     Free(e.buf);
     return NULL;
