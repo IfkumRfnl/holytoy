@@ -37,8 +37,28 @@ class CHtUniforms
 };
 
 CHtUniforms ht_u;
-U0 (*ht_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
-U0 (*ht_default_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
+
+class CHtFrame
+{//plan 011: per-frame derived Shadertoy uniforms. Filled once per frame by
+ //HtFrameSetup on the control core, read-only during shading, so concurrent
+ //ht_fp calls need no lock (see the reentrancy contract on ht_fp below).
+  F64 itime,itdelta,ifrate;
+  CHtV3 ires;
+  CHtV4 imouse,idate;
+  I64 iframe;
+};
+CHtFrame ht_frame;		//filled once/frame; read-only while shading
+
+//plan 011 ht_fp reentrancy contract: ht_fp reads only its scalar frag args
+//(per-call, private), the shared read-only ht_frame, and shared read-only
+//const globals/LUTs; it writes only through out_color (caller-owned) and its
+//own stack (CHtCtx, temps). Concurrent calls from multiple cores are safe
+//WITHOUT a lock provided the caller guarantees: (1) ht_frame filled by
+//HtFrameSetup before the first worker and not mutated until all workers for
+//that frame have joined; (2) each concurrent call has a distinct
+//CHtFragColor output; (3) no shader install/rebind runs during fan-out.
+U0 (*ht_fp)(F64 frag_x,F64 frag_y,CHtFragColor *out_color);
+U0 (*ht_default_fp)(F64 frag_x,F64 frag_y,CHtFragColor *out_color);
 U8 ht_glsl_src[HT_GLSL_MAX];	//GLSL editor source; never replaced by HolyC
 U8 ht_status[96];		//status/error line text
 Bool ht_status_err;		//status line draws LTRED when TRUE
@@ -76,6 +96,18 @@ U8 *ht_glsl_slow=
 "  fragColor = vec4(v);\n"
 "}\n";
 
+U8 *ht_glsl_ctx=
+"// plan 011 per-invocation ctx self-test: a mutable global initialized to\n"
+"// 2 each invocation, then bumped by +2 through a nested helper chain, must\n"
+"// read back as 4 (=>1.0) on EVERY call - never accumulating across pixels.\n"
+"int g_acc = 2;\n"
+"void addOne() { g_acc += 1; }\n"
+"void addTwo() { addOne(); addOne(); }\n"
+"void mainImage(out vec4 fragColor, in vec2 fragCoord) {\n"
+"  addTwo();\n"
+"  fragColor = vec4(float(g_acc) / 4.0);\n"
+"}\n";
+
 U0 HtScaleReset()
 {//A newly installed shader starts coarse; history never crosses shaders.
   ht_scale_slow=0;
@@ -84,9 +116,9 @@ U0 HtScaleReset()
     ht_scale=16;
 }
 
-U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color)
+U0 MainImage(F64 frag_x,F64 frag_y,CHtFragColor *out_color)
 {//Built-in last-good shader: plasma bands while GLSL is being edited.
-  F64 t=u->i_time,v;
+  F64 t=ht_frame.itime,v;
   v=Sin(frag_x*0.021+t)+
     Sin(frag_y*0.032-t*0.7)+
     Sin((frag_x+frag_y)*0.014+t*0.5)+
@@ -151,7 +183,7 @@ U0 HtDrawPane(CTask *task,CDC *dc)
   GrPrint(dc,0,HT_STATUS_ROW*FONT_HEIGHT," %s",ht_status);
 }
 
-U0 (*ht_new_fp)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
+U0 (*ht_new_fp)(F64 frag_x,F64 frag_y,CHtFragColor *out_color);
 
 Bool HtInstallHoly(U8 *holy)
 {//Compile generated HolyC in-task (ExePutS2, Compiler/CMain.HC:631 throws
@@ -217,6 +249,36 @@ Bool HtCompileAndSwapGlsl(U8 *glsl)
   return ok;
 }
 
+U0 HtFrameSetup(CHtUniforms *u)
+{//plan 011: derive the current frame's read-only uniforms from the raw
+ //CHtUniforms once per frame, on the control core, before any worker runs.
+ //This is the OLD generated stamp block, lifted verbatim to the runtime.
+  ht_frame.itime=u->i_time;
+  ht_frame.itdelta=1.0/30.0;
+  ht_frame.ifrate=30.0;
+  ht_frame.iframe=u->i_frame;
+  ht_frame.ires.x=u->res_x;
+  ht_frame.ires.y=u->res_y;
+  ht_frame.ires.z=1.0;
+  ht_frame.imouse.x=u->mouse_x;
+  ht_frame.imouse.y=u->res_y-u->mouse_y;
+  if (u->click_x<0) {
+    ht_frame.imouse.z=0.0;
+    ht_frame.imouse.w=0.0;
+  } else {
+    ht_frame.imouse.z=u->click_x;
+    ht_frame.imouse.w=u->res_y-u->click_y;
+    if (!u->mouse_lb) {
+      ht_frame.imouse.z=-ht_frame.imouse.z;
+      ht_frame.imouse.w=-ht_frame.imouse.w;
+    }
+  }
+  ht_frame.idate.x=u->date_year;
+  ht_frame.idate.y=u->date_mon;
+  ht_frame.idate.z=u->date_day;
+  ht_frame.idate.w=u->date_secs;
+}
+
 U0 HtDrawIt(CTask *task,CDC *dc)
 {//dc aliases gr.dc2; raw body pokes are ABSOLUTE screen coords.
   I64 bx,by,i,j,sx0,sy,stride=dc->width_internal,r88,g88,b88;
@@ -245,6 +307,7 @@ U0 HtDrawIt(CTask *task,CDC *dc)
     ht_u.click_y=ht_u.mouse_y;
   }
   ht_mouse_lb_prev=ht_u.mouse_lb;
+  HtFrameSetup(&ht_u);		//plan 011: fill ht_frame once before shading
   ht_t0=tS;			//time the shading work only, not the winmgr
 				//frame cadence (docs/notes/perf-floor.md)
   if (ht_fp) {
@@ -252,7 +315,7 @@ U0 HtDrawIt(CTask *task,CDC *dc)
       for (bx=0;bx<nbx;bx++) {
         fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
         //At ht_scale=1 this is the exact Shadertoy pixel center (Y-up).
-        ht_fp(&ht_u,bx*ht_scale+ht_scale*0.5,
+        ht_fp(bx*ht_scale+ht_scale*0.5,
               vh-(by*ht_scale+ht_scale*0.5),&fc);
         r88=ToI64(fc.r*256.0);
         g88=ToI64(fc.g*256.0);
@@ -348,20 +411,17 @@ Bool HtVisualDump(U8 *path,F64 time,I64 frame)
   u.date_day=1;
   u.date_secs=0.0;
   try {
-    //Generated shaders rebind uniform globals when u->i_frame changes
-    //(HTEMIT.HC stamp). Live frames may have left ANY stamp value, so
-    //prime with a sentinel no real frame uses, then the state's frame
-    //value forces exactly one deterministic rebind for all 2880 samples.
-    u.i_frame=-1;
-    fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
-    ht_fp(&u,4.0,284.0,&fc);
+    //plan 011: HtFrameSetup fills the shared read-only ht_frame once for
+    //this pinned state; every sample then shades deterministically with no
+    //stamp cache or sentinel to prime (the frame-rebind race is gone).
     u.i_frame=frame;
+    HtFrameSetup(&u);
     for (by=0;by<36;by++)
       for (bx=0;bx<80;bx++) {
         px=bx*8+4;
         py=288-(by*8+4);
         fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
-        ht_fp(&u,px,py,&fc);
+        ht_fp(px,py,&fc);
         buf[o++]=HtDump8(fc.r);
         buf[o++]=HtDump8(fc.g);
         buf[o++]=HtDump8(fc.b);
@@ -411,9 +471,10 @@ U0 HtSelfTest()
 {//Headless proof driven by guest/RUN.HC; markers land in guest.log via
  //the task-doc dump.  Leaves the failed-compile state on screen at the
  //end so the final screenshot shows the error line over a live viewport.
-  U0 (*before)(CHtUniforms *u,F64 frag_x,F64 frag_y,CHtFragColor *out_color);
+  U0 (*before)(F64 frag_x,F64 frag_y,CHtFragColor *out_color);
   I64 f1,f2,dx,dy,n=0,first=-1,scale_lock_save,scale_up,scale_down;
-  Bool mono=TRUE,vary=FALSE;
+  Bool mono=TRUE,vary=FALSE,ctx_ok=FALSE;
+  CHtFragColor c1,c2,c3;
   Sleep(2000);			//~2s of shader v1 for the rolling frame dump
   before=ht_fp;
   if (HtCompileAndSwapGlsl(ht_glsl2) && ht_fp!=before && ht_fp==ht_new_fp)
@@ -460,6 +521,27 @@ U0 HtSelfTest()
     "HT DITHER OK\n";
   else
     "HT DITHER FAIL\n";
+  //plan 011: per-invocation context. The ctx fixture bumps a mutable global
+  //(g_acc, initialized to 2 per invocation) by +2 through a nested helper
+  //chain, so it must read back as 4 (=>r=1.0) on EVERY call and never
+  //accumulate. This guards the needs_ctx transitive analysis (g_acc is only
+  //touched via addTwo->addOne) and the per-invocation ctx re-initialization.
+  if (HtCompileAndSwapGlsl(ht_glsl_ctx)) {
+    HtFrameSetup(&ht_u);
+    c1.r=0.0; c1.g=0.0; c1.b=0.0; c1.a=0.0;
+    ht_fp(40.5,40.5,&c1);
+    c2.r=0.0; c2.g=0.0; c2.b=0.0; c2.a=0.0;
+    ht_fp(40.5,40.5,&c2);
+    c3.r=0.0; c3.g=0.0; c3.b=0.0; c3.a=0.0;
+    ht_fp(40.5,40.5,&c3);
+    if (Abs(c1.r-1.0)<0.01 && Abs(c2.r-1.0)<0.01 && Abs(c3.r-1.0)<0.01)
+      ctx_ok=TRUE;
+  }
+  if (ctx_ok)
+    "HT CTX OK\n";
+  else
+    "HT CTX FAIL r=%d,%d,%d\n",
+      ToI64(c1.r*1000.0),ToI64(c2.r*1000.0),ToI64(c3.r*1000.0);
   scale_lock_save=ht_scale_lock;
   ht_scale_lock=0;
   if (HtCompileAndSwapGlsl(ht_glsl_slow)) {
@@ -547,6 +629,7 @@ U0 HtCorpusRun()
     }
     "HT CORPUS %s install OK\n",id;
     ok=TRUE;
+    HtFrameSetup(&ht_u);	//plan 011: fill ht_frame for the exec samples
     t0=tS;
     try {
       for (k=0;k<4;k++) {
@@ -556,7 +639,7 @@ U0 HtCorpusRun()
         else if (k==2) { px=600.5; py=20.5; }
         else { px=16.5; py=16.5; }
         fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
-        ht_fp(&ht_u,px,py,&fc);
+        ht_fp(px,py,&fc);
         if (!HtFinite(fc.r) || !HtFinite(fc.g) ||
             !HtFinite(fc.b) || !HtFinite(fc.a))
           ok=FALSE;

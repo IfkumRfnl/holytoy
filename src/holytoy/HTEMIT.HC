@@ -52,6 +52,8 @@ class CHtEmitter
   I64 lbl;		//loop label counter
   I64 loop_lbl[64];	//continue label id per active loop (-1 = none)
   I64 loop_top;
+  I64 *needs_ctx;	//plan 011: per-func-node, threads CHtCtx *ctx
+  Bool has_ctx;		//plan 011: any per-invocation global exists
 };
 
 Bool HtOutGrow(CHtEmitter *e,I64 extra)
@@ -110,6 +112,18 @@ U0 HtSymText(CHtEmitter *e,I64 s,U8 *buf)
     StrPrint(buf,"ug%d_%s",s,nm);
   else
     StrPrint(buf,"v%d_%s",s,nm);
+}
+
+U0 HtSymRef(CHtEmitter *e,I64 s,U8 *buf)
+{//plan 011: reference text for a symbol. Per-invocation globals live in the
+ //stack-allocated CHtCtx and are reached through ctx->; everything else
+ //(shared-const globals, params, locals) uses its plain storage name.
+  U8 nm[96];
+  if (HtGlobalPerInvocation(e->prog,s)) {
+    HtSymText(e,s,nm);
+    StrPrint(buf,"ctx->%s",nm);
+  } else
+    HtSymText(e,s,buf);
 }
 
 U0 HtStructName(CHtEmitter *e,I64 sid,U8 *buf)
@@ -349,7 +363,7 @@ U0 HtEmLval(CHtEmitter *e,I64 i,CHtLval *lv)
   MemSet(lv,0,sizeof(CHtLval));
   if (n->kind==HT_AST_NAME) {
     s=&p->sym[n->c];
-    HtSymText(e,n->c,nm);
+    HtSymRef(e,n->c,nm);
     lv->type=n->type;
     if (s->kind==HT_SYM_PARAM) {
       if (HtTIsComposite(s->type)) {
@@ -485,7 +499,7 @@ U0 HtEmLvalAddr(CHtEmitter *e,I64 i,U8 *buf,I64 *copyback_node)
   *copyback_node=-1;
   if (n->kind==HT_AST_NAME) {
     s=&p->sym[n->c];
-    HtSymText(e,n->c,nm);
+    HtSymRef(e,n->c,nm);
     if (s->kind==HT_SYM_PARAM &&
         (HtTIsComposite(s->type) || (s->flags&HTF_OUT))) {
       StrCpy(buf,nm);			//already a pointer
@@ -1129,6 +1143,7 @@ U0 HtEmUserCall(CHtEmitter *e,I64 i,CHtVal *out)
   I64 f=n->c,arg=n->b,m=p->node[f].a,cbn;
   U8 fname[64],atext[8192],one[160],addr[112],ty[48];
   Bool first=TRUE,composite_ret=HtTIsComposite(p->node[f].type);
+  Bool cctx=e->needs_ctx && e->needs_ctx[f];	//plan 011: forward ctx?
   atext[0]=0;
   HtFuncName(e,f,fname);
   while (m>=0) {
@@ -1181,22 +1196,35 @@ U0 HtEmUserCall(CHtEmitter *e,I64 i,CHtVal *out)
     m=par->next;
     arg=p->node[arg].next;
   }
+  //plan 011: forward ctx as the first argument to a callee that touches a
+  //per-invocation global, ahead of the composite-return pointer and args.
   if (HtTKind(p->node[f].type)==HTT_VOID) {
-    HtOutF(e,"%s(%s);\n",fname,atext);
+    if (cctx) {
+      if (atext[0]) HtOutF(e,"%s(ctx,%s);\n",fname,atext);
+      else HtOutF(e,"%s(ctx);\n",fname);
+    } else
+      HtOutF(e,"%s(%s);\n",fname,atext);
     out->type=HTT_VOID;
     StrCpy(out->text,"0");
     out->is_ptr=FALSE;
   } else if (composite_ret) {
     HtNewTmp(e,p->node[f].type,&t);
     HtValAddr(e,&t,addr);
-    if (atext[0])
-      HtOutF(e,"%s(%s,%s);\n",fname,addr,atext);
-    else
-      HtOutF(e,"%s(%s);\n",fname,addr);
+    if (cctx) {
+      if (atext[0]) HtOutF(e,"%s(ctx,%s,%s);\n",fname,addr,atext);
+      else HtOutF(e,"%s(ctx,%s);\n",fname,addr);
+    } else {
+      if (atext[0]) HtOutF(e,"%s(%s,%s);\n",fname,addr,atext);
+      else HtOutF(e,"%s(%s);\n",fname,addr);
+    }
     MemCpy(out,&t,sizeof(CHtVal));
   } else {
     HtNewTmp(e,p->node[f].type,&t);
-    HtOutF(e,"%s=%s(%s);\n",t.text,fname,atext);
+    if (cctx) {
+      if (atext[0]) HtOutF(e,"%s=%s(ctx,%s);\n",t.text,fname,atext);
+      else HtOutF(e,"%s=%s(ctx);\n",t.text,fname);
+    } else
+      HtOutF(e,"%s=%s(%s);\n",t.text,fname,atext);
     MemCpy(out,&t,sizeof(CHtVal));
   }
   //copy-back for swizzle/dynamic out-args
@@ -1240,38 +1268,38 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
       return;
     }
     if (n->bind==HT_BIND_ITIME) {
-      StrCpy(out->text,"htu_itime");
+      StrCpy(out->text,"ht_frame.itime");
       return;
     }
     if (n->bind==HT_BIND_IRES) {
-      StrCpy(out->text,"htu_ires");
+      StrCpy(out->text,"ht_frame.ires");
       return;
     }
     if (n->bind==HT_BIND_IMOUSE) {
-      StrCpy(out->text,"htu_imouse");
+      StrCpy(out->text,"ht_frame.imouse");
       return;
     }
     if (n->bind==HT_BIND_IDATE) {
-      StrCpy(out->text,"htu_idate");
+      StrCpy(out->text,"ht_frame.idate");
       return;
     }
     if (n->bind==HT_BIND_IFRAME) {
-      StrCpy(out->text,"htu_iframe");
+      StrCpy(out->text,"ht_frame.iframe");
       return;
     }
     if (n->bind==HT_BIND_ITDELTA) {
-      StrCpy(out->text,"htu_itdelta");
+      StrCpy(out->text,"ht_frame.itdelta");
       return;
     }
     if (n->bind==HT_BIND_IFRATE) {
-      StrCpy(out->text,"htu_ifrate");
+      StrCpy(out->text,"ht_frame.ifrate");
       return;
     }
     //symbol
     {
       CHtSym *s=&p->sym[n->c];
       U8 nm[96];
-      HtSymText(e,n->c,nm);
+      HtSymRef(e,n->c,nm);
       if (s->kind==HT_SYM_PARAM) {
         if (HtTIsComposite(s->type)) {
           StrCpy(out->text,nm);
@@ -1558,7 +1586,7 @@ U0 HtEmDeclInit(CHtEmitter *e,I64 i)
   U8 nm[96];
   I64 arg,c;
   if (n->a<0) return;
-  HtSymText(e,n->c,nm);
+  HtSymRef(e,n->c,nm);
   if (p->node[n->a].kind==HT_AST_ARRCTOR) {
     arg=p->node[n->a].b;
     c=0;
@@ -1736,7 +1764,14 @@ U0 HtEmFuncDef(CHtEmitter *e,I64 f)
     HtTypeText(e,n->type,ty);
     HtOutF(e,"%s %s(",ty,fname);
   }
+  //plan 011 canonical order: ctx (if touching), then composite-return ptr,
+  //then declared params.
+  if (e->needs_ctx && e->needs_ctx[f]) {
+    HtOut(e,"CHtCtx *ctx");
+    first=FALSE;
+  }
   if (composite_ret) {
+    if (!first) HtOut(e,",");
     HtTypeText(e,n->type,ty);
     HtOutF(e,"%s *ht_ret",ty);
     first=FALSE;
@@ -1825,6 +1860,87 @@ U0 HtEmCollectChain(CHtProgram *p,I64 i,I64 *list,I64 *count)
   }
 }
 
+extern Bool HtCtxTouchChain(CHtProgram *p,I64 i);
+
+Bool HtCtxTouchNode(CHtProgram *p,I64 i)
+{//plan 011: does subtree i directly reference a per-invocation global?
+ //Same traversal shape as HtEmCollectCalls, adding NAME-leaf inspection.
+  CHtAst *n;
+  if (i<0) return FALSE;
+  n=&p->node[i];
+  if (n->kind==HT_AST_NAME)
+    return n->bind==HT_BIND_SYM && HtGlobalPerInvocation(p,n->c);
+  if (n->kind==HT_AST_CALL)
+    return HtCtxTouchChain(p,n->b);	//callee is a name, not a symbol ref
+  if (n->kind==HT_AST_BLOCK)
+    return HtCtxTouchChain(p,n->a);
+  if (n->kind==HT_AST_ARRCTOR)
+    return HtCtxTouchChain(p,n->b);
+  if (n->kind==HT_AST_FOR)
+    return HtCtxTouchChain(p,n->a) || HtCtxTouchNode(p,n->b) ||
+           HtCtxTouchNode(p,n->c) || HtCtxTouchNode(p,n->d);
+  if (n->kind==HT_AST_MEMBER || n->kind==HT_AST_EXPR_STMT ||
+      n->kind==HT_AST_RETURN || n->kind==HT_AST_PREINC ||
+      n->kind==HT_AST_POSTINC || n->kind==HT_AST_UNARY ||
+      n->kind==HT_AST_DECL)
+    return HtCtxTouchNode(p,n->a);
+  if (n->kind==HT_AST_BINARY || n->kind==HT_AST_ASSIGN ||
+      n->kind==HT_AST_INDEX || n->kind==HT_AST_SEQ ||
+      n->kind==HT_AST_WHILE || n->kind==HT_AST_DO)
+    return HtCtxTouchNode(p,n->a) || HtCtxTouchNode(p,n->b);
+  if (n->kind==HT_AST_TERNARY || n->kind==HT_AST_IF)
+    return HtCtxTouchNode(p,n->a) || HtCtxTouchNode(p,n->b) ||
+           HtCtxTouchNode(p,n->c);
+  return FALSE;
+}
+
+Bool HtCtxTouchChain(CHtProgram *p,I64 i)
+{
+  while (i>=0) {
+    if (HtCtxTouchNode(p,i)) return TRUE;
+    i=p->node[i].next;
+  }
+  return FALSE;
+}
+
+U0 HtEmComputeNeedsCtx(CHtEmitter *e)
+{//plan 011 sec3: needs_ctx[F] = F directly touches a per-invocation global
+ //OR any (transitive) callee does. Fixpoint over the call graph; GLSL
+ //forbids recursion so it converges. main is forced on when ctx is used.
+  CHtProgram *p=e->prog;
+  CHtAst *n;
+  I64 i,k,list[128],count;
+  Bool changed=TRUE;
+  if (!e->has_ctx) return;
+  i=p->root;
+  while (i>=0) {
+    n=&p->node[i];
+    if (n->kind==HT_AST_FUNC && n->b>=0)
+      e->needs_ctx[i]=HtCtxTouchNode(p,n->b);
+    i=n->next;
+  }
+  while (changed) {
+    changed=FALSE;
+    i=p->root;
+    while (i>=0) {
+      n=&p->node[i];
+      if (n->kind==HT_AST_FUNC && n->b>=0 && !e->needs_ctx[i]) {
+        count=0;
+        HtEmCollectCalls(p,n->b,list,&count);
+        for (k=0;k<count;k++)
+          if (e->needs_ctx[list[k]]) {
+            e->needs_ctx[i]=TRUE;
+            changed=TRUE;
+            break;
+          }
+      }
+      i=n->next;
+    }
+  }
+  if (p->main_node>=0)
+    e->needs_ctx[p->main_node]=TRUE;
+}
+
 U0 HtEmFuncTopo(CHtEmitter *e,I64 f,I64 *emitted,I64 *visiting)
 {//emit callees before callers (GLSL forbids recursion, so this terminates)
   CHtProgram *p=e->prog;
@@ -1875,24 +1991,50 @@ U8 *HtEmit(CHtProgram *p)
     }
     HtOut(&e,"};\n");
   }
-  //uniform globals (fresh per generated unit; shadowing on reinstall)
-  HtOut(&e,"F64 htu_itime,htu_itdelta,htu_ifrate;\n"
-           "CHtV3 htu_ires;\nCHtV4 htu_imouse,htu_idate;\n"
-           "I64 htu_iframe,htu_stamp;\n");
-  //user globals
+  //plan 011: the standard Shadertoy uniforms are runtime-owned (CHtFrame
+  //ht_frame in HT.HC), filled once per frame by HtFrameSetup before any
+  //worker runs. No per-unit uniform globals and no stamp-rebind block.
+  //User globals split: shared read-only const globals stay process globals
+  //(initialized once at install); per-invocation globals move into CHtCtx.
   i=p->root;
   while (i>=0) {
     n=&p->node[i];
     if (n->kind==HT_AST_DECL) {
-      HtTypeText(&e,n->type,ty);
-      HtSymText(&e,n->c,nm);
-      if (HtTArr(n->type))
-        HtOutF(&e,"%s %s[%d];\n",ty,nm,HtTArr(n->type));
-      else
-        HtOutF(&e,"%s %s;\n",ty,nm);
+      if (HtGlobalPerInvocation(p,n->c))
+        e.has_ctx=TRUE;
+      else {
+        HtTypeText(&e,n->type,ty);
+        HtSymText(&e,n->c,nm);
+        if (HtTArr(n->type))
+          HtOutF(&e,"%s %s[%d];\n",ty,nm,HtTArr(n->type));
+        else
+          HtOutF(&e,"%s %s;\n",ty,nm);
+      }
     }
     i=n->next;
   }
+  //per-invocation context class (after struct classes, before functions);
+  //nothing is emitted when the per-invocation set is empty.
+  if (e.has_ctx) {
+    HtOut(&e,"class CHtCtx\n{\n");
+    i=p->root;
+    while (i>=0) {
+      n=&p->node[i];
+      if (n->kind==HT_AST_DECL && HtGlobalPerInvocation(p,n->c)) {
+        HtTypeText(&e,n->type,ty);
+        HtSymText(&e,n->c,nm);
+        if (HtTArr(n->type))
+          HtOutF(&e,"  %s %s[%d];\n",ty,nm,HtTArr(n->type));
+        else
+          HtOutF(&e,"  %s %s;\n",ty,nm);
+      }
+      i=n->next;
+    }
+    HtOut(&e,"};\n");
+  }
+  //which functions thread CHtCtx *ctx (only-if-touches, transitive)
+  e.needs_ctx=CAlloc(p->node_count*sizeof(I64));
+  HtEmComputeNeedsCtx(&e);
   //functions in callee-first order
   emitted=CAlloc(p->node_count*sizeof(I64));
   visiting=CAlloc(p->node_count*sizeof(I64));
@@ -1905,60 +2047,56 @@ U8 *HtEmit(CHtProgram *p)
   }
   Free(emitted);
   Free(visiting);
-  //MainImage ABI glue
+  //per-invocation context init (defined before MainImage, which calls it):
+  //MemSet then re-run each per-invocation global initializer in decl order.
+  if (!*p->error && e.has_ctx) {
+    HtOut(&e,"U0 HtCtxInit(CHtCtx *ctx)\n{\n");
+    HtOut(&e,"MemSet(ctx,0,sizeof(CHtCtx));\n");
+    i=p->root;
+    while (i>=0 && !*p->error) {
+      n=&p->node[i];
+      if (n->kind==HT_AST_DECL && HtGlobalPerInvocation(p,n->c))
+        HtEmDeclInit(&e,i);
+      i=n->next;
+    }
+    HtOut(&e,"}\n");
+  }
+  //MainImage ABI glue (plan 011 signature; reentrant, no stamp block)
   if (!*p->error) {
     HtFuncName(&e,p->main_node,fname);
     HtOut(&e,
-      "U0 MainImage(CHtUniforms *u,F64 frag_x,F64 frag_y,"
-      "CHtFragColor *out_color)\n{\n"
-      "  CHtV2 htg_fc;\n  CHtV4 htg_col;\n"
-      "  if (htu_stamp!=u->i_frame) {\n"
-      "    htu_stamp=u->i_frame;\n"
-      "    htu_itime=u->i_time;\n"
-      "    htu_itdelta=1.0/30.0;\n"
-      "    htu_ifrate=30.0;\n"
-      "    htu_iframe=u->i_frame;\n"
-      "    htu_ires.x=u->res_x;\n"
-      "    htu_ires.y=u->res_y;\n"
-      "    htu_ires.z=1.0;\n"
-      "    htu_imouse.x=u->mouse_x;\n"
-      "    htu_imouse.y=u->res_y-u->mouse_y;\n"
-      "    if (u->click_x<0) {\n"
-      "      htu_imouse.z=0.0;\n      htu_imouse.w=0.0;\n"
-      "    } else {\n"
-      "      htu_imouse.z=u->click_x;\n"
-      "      htu_imouse.w=u->res_y-u->click_y;\n"
-      "      if (!u->mouse_lb) {\n"
-      "        htu_imouse.z=-htu_imouse.z;\n"
-      "        htu_imouse.w=-htu_imouse.w;\n"
-      "      }\n"
-      "    }\n"
-      "    htu_idate.x=u->date_year;\n"
-      "    htu_idate.y=u->date_mon;\n"
-      "    htu_idate.z=u->date_day;\n"
-      "    htu_idate.w=u->date_secs;\n"
-      "  }\n"
+      "U0 MainImage(F64 frag_x,F64 frag_y,CHtFragColor *out_color)\n{\n"
+      "  CHtV2 htg_fc;\n  CHtV4 htg_col;\n");
+    if (e.has_ctx)
+      HtOut(&e,
+        "  CHtCtx ctx_store;\n"
+        "  CHtCtx *ctx=&ctx_store;\n"
+        "  HtCtxInit(ctx);\n");
+    HtOut(&e,
       "  htg_fc.x=frag_x;\n  htg_fc.y=frag_y;\n"
       "  htg_col.x=0.0;\n  htg_col.y=0.0;\n"
       "  htg_col.z=0.0;\n  htg_col.w=1.0;\n");
-    HtOutF(&e,"  %s(&htg_col,&htg_fc);\n",fname);
+    if (e.has_ctx)
+      HtOutF(&e,"  %s(ctx,&htg_col,&htg_fc);\n",fname);
+    else
+      HtOutF(&e,"  %s(&htg_col,&htg_fc);\n",fname);
     HtOut(&e,
       "  out_color->r=htg_col.x;\n"
       "  out_color->g=htg_col.y;\n"
       "  out_color->b=htg_col.z;\n"
       "  out_color->a=htg_col.w;\n}\n");
-    //global initializers, in declaration order
+    //shared-const global initializers, in declaration order (may be empty)
     HtOut(&e,"U0 HtShaderInit()\n{\n");
-    HtOut(&e,"htu_stamp=-1;\n");
     i=p->root;
     while (i>=0 && !*p->error) {
       n=&p->node[i];
-      if (n->kind==HT_AST_DECL)
+      if (n->kind==HT_AST_DECL && !HtGlobalPerInvocation(p,n->c))
         HtEmDeclInit(&e,i);
       i=n->next;
     }
     HtOut(&e,"}\nHtShaderInit;\n");
   }
+  Free(e.needs_ctx);
   if (*p->error) {
     Free(e.buf);
     return NULL;
