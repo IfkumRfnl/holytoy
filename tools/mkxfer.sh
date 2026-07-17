@@ -69,6 +69,11 @@ fi
 if [ -n "${HOLYTOY_CORES:-}" ]; then
     echo "$HOLYTOY_CORES" | mcopy -o - x:/CORES.TXT
 fi
+# plan 013: HOLYTOY_F32=0 turns the emitter's F32-semantics mode off (F64
+# path); any other value leaves the default-on mode alone.
+if [ "${HOLYTOY_F32:-}" = "0" ]; then
+    echo 0 | mcopy -o - x:/F32.TXT
+fi
 # Visual-oracle dump request: HT.HC writes V00A/V00B sample DATs after a
 # successful single-shader GLSL compile (plan 010).
 if [ -n "${HOLYTOY_VISDUMP:-}" ]; then

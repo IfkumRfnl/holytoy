@@ -1,6 +1,7 @@
 # Plan 013: F32 semantics — bit-reproducing llvmpipe to converge the hash shaders
 
-Status: TODO. Depends on plan 011 (HTEMIT rewrite ordering); can run in
+Status: DONE (2026-07-17, branch plan-013-f32; see "## Completion
+evidence"). Depends on plan 011 (HTEMIT rewrite ordering); can run in
 parallel with plan 012 (disjoint files except small HT.HC knob edits —
 rebase after 012 merges). Designed 2026-07-17 by an Opus 4.8 design
 agent; probes `run-20260717-152012-ZP15Ou` (F32 rounding primitives:
@@ -189,3 +190,98 @@ Uniform ABI: `iTime`, `iResolution`, `fragCoord` etc. must be fed as F32-exact v
 3. **Exact `exp2`/`log2`/`pow` polynomials** (deferred; needed only if a future corpus batch surfaces a transcendental-driven hash).
 4. **Should F32 mode be always-on or per-shader?** Recommendation: default on with a `HOLYTOY_F32=0` escape hatch mirroring `SCALE.TXT`, so the 28 currently-passing shaders can be A/B-checked for any regression (expected: none, since F32 is strictly closer to the reference).
 5. **Confirm the cosine branch** (`emm2_and - 2`, `sign_bit = ((~emm2_2)&4)<<29`) reproduces llvmpipe as exactly as the sin branch did — validate `HtCosF32` against a `cos`-only probe shader rendered through `glsl_ref.py` before trusting it (do not derive cos as `HtSinF32(x+π/2)`; the reduction differs).
+---
+
+## Completion evidence
+
+Status: DONE (landed on branch `plan-013-f32`, 2026-07-17). Core F32
+bit-reproduction implemented and host-verified against real llvmpipe;
+`make test` 13/13; zero corpus regressions. Convergence target partially
+met (see caveat below) — the STOP condition was reached and the residual
+FAILs are chaotic 3D raymarchers, reclassified with the Monte-Carlo group.
+
+### What shipped
+- `HTLIB.HC`: `HtF32BitsRNE`/`HtF32` (RNE F64→F32, correct subnormals —
+  the probe's denormal bug is fixed; `1e-40→0x000116C2`, `1.4e-45→0x1`),
+  `HtFmaF32`, `HtSinCosF32`/`HtSinF32`/`HtCosF32` (gallivm Cephes-F32
+  replica; cos branch validated separately), `HtFractF32`, `HtModF32`,
+  `HtSqrtF32`, `HtInvSqrtF32`, `HtMixF32`, and per-op F32 cross-component
+  helpers (`HtV{2,3,4}Dot/Len/Dist/Norm`, `HtV3Cross`, `HtV{2,3}Reflect`,
+  `HtM{2,3,4}MulV`, `HtVMulM{2,3,4}`, `HtMMulM`). `HT F32 OK` self-test gate.
+- `HTEMIT.HC`: `f32` emitter mode (default via `ht_f32_mode`, ON). Float
+  literals wrapped `HtF32(...)`; float scalar/vector arithmetic, compound
+  assigns, int→float conversions rounded; `sin/cos/fract/mod/sqrt/
+  inversesqrt/mix` and all dot/length/normalize/cross/reflect/matrix
+  builtins routed to the F32 helpers.
+- `HT.HC`: `HtF32Init` at startup; `HOLYTOY_F32=0` escape via `E:/F32.TXT`
+  (mirrors `SCALE.TXT`; `mkxfer.sh` ships it). `test.sh` proof 6 greps
+  `HT F32 OK`.
+
+### Host bit-exactness (tools/glsl_ref.py, real llvmpipe LLVM19/Mesa25),
+### exact-bits probes, all 2880/2880 unless noted:
+- `sin`, `cos` (moderate AND large arguments): 100% exact.
+- user `a*b+c`: llvmpipe does NOT fuse — it is `round(round(a*b)+c)`
+  (muladd), which the emitter's per-op path already reproduces.
+- `dot` is RIGHT-associative per-op: `x*x + (y*y + z*z)` (perR 100%;
+  left-assoc only 69%). `cross`, `mix`, `mod`, `sqrt`, `inversesqrt`,
+  `mat*vec`: 100% with per-op right-assoc.
+
+### KEY BUG FOUND: TempleOS's float lexer corrupts ~20-significant-digit
+literals (`2.4187564849853515625e-4` parses to `5.74e-5`), which silently
+broke the Cephes DP2 argument-reduction constant. All folded constants are
+now ≤9-sig-digit decimals (numpy-verified to the same F32 bit pattern).
+This also affects any *user* shader literal of that length — a pre-existing
+lexer limitation, out of scope here but worth a follow-up note.
+
+### Corpus v2 stratum A visual (tol 16/255, ≥90% both states)
+Baseline = `HOLYTOY_F32=0`; F32 = default. Zero regressions among the 28
+originally-passing; exec 39/39 both modes. **28/39 → 32/39.**
+
+| id     | class | F64 pctA/pctB | F64  | F32 pctA/pctB | F32  |
+|--------|-------|---------------|------|---------------|------|
+| XdsGWH | hash  | 25.5/25.5     | FAIL | 25.5/25.5     | FAIL |
+| MdlGz4 | hash  | 43.3/51.8     | FAIL | 100.0/100.0   | OK   |
+| lds3D8 | hash  | 52.5/48.8     | FAIL | 58.8/58.2     | FAIL |
+| lsX3DH | hash  | 50.5/39.4     | FAIL | 100.0/100.0   | OK   |
+| lsX3WH | hash  | 48.0/38.9     | FAIL | 83.0/80.2     | FAIL |
+| Xlt3Dn | hash  | 70.9/73.3     | FAIL | 96.3/99.4     | OK   |
+| 4lfGWr | MC    | 43.4/99.5     | FAIL | 40.1/99.1     | FAIL |
+| 4sfGWX | MC    | 68.8/77.0     | FAIL | 97.8/99.6     | OK   |
+| 4tl3z4 | MC    | 87.5/82.1     | FAIL | 87.5/79.2     | FAIL |
+| MtfGR4 | MC    | 73.7/74.7     | FAIL | 76.5/78.1     | FAIL |
+| tlSSDV | MC    | 83.1/74.6     | FAIL | 83.1/74.7     | FAIL |
+
+Converged: MdlGz4, lsX3DH, Xlt3Dn (spatial-hash) + 4sfGWX (Monte-Carlo).
+
+### Caveat on done-criterion 3 (STOP condition invoked)
+3 of the 6 "spatial-hash" shaders flipped to OK; total is 32/39, short of
+the ≥34/39 / all-6 target. The 3 that did not converge — XdsGWH (Mars
+terrain fbm), lds3D8 and lsX3WH (Reinder DDA sphere-grid raymarchers) — are
+NOT short-chain 2D hashes; they are iterative 3D raymarchers whose ray /
+DDA-cell / branch decisions decorrelate under any per-sample difference.
+Every primitive on their path is bit-verified vs llvmpipe (sin, cos, dot
+right-assoc, cross, sqrt, inversesqrt, mod, mix, arithmetic, literals), yet
+their scores are unchanged (XdsGWH is byte-identical F64↔F32: the sky
+matches, the terrain is fully decorrelated in both). They behave exactly
+like the Monte-Carlo class. Per the plan STOP condition (dot/normalize FMA
+investigated — right-associative per-op, verified 100%), we stop here and
+reclassify these three with the Monte-Carlo tracers as candidates for a
+distribution-level oracle metric rather than per-sample tolerance. Refs
+were never regenerated; tolerances never tuned.
+
+### Monte-Carlo (done-criterion 4)
+4sfGWX converged (a genuine F32 win). 4lfGWr, 4tl3z4, MtfGR4, tlSSDV remain
+FAIL and are ALLOWED to. Recommendation stands: a mean/variance or
+histogram-distance oracle for shaders flagged chaotic (the 4 MC tracers +
+XdsGWH/lds3D8/lsX3WH), instead of per-sample 16/255 tolerance.
+
+### Perf (done-criterion 5)
+`make test` proof 6 (`HT SCALE OK`) passes with F32 mode ON by default: the
+adaptive controller coarsens the expensive fixture to 1:16 and refines the
+cheap one to ≤1:4, i.e. stays interactive. Corpus exec times 0–21 ms/shader
+at the pinned probe points. Semantics are scale-independent by construction.
+
+### Proofs
+`make test` 13/13 green. Proof 13 (oracle, `gradient.glsl`) still matches
+`refs-fixtures` under F32 mode — gradient's dump is bit-stable, no ref
+regen (the STOP-and-investigate trip was not triggered).

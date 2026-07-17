@@ -54,7 +54,18 @@ class CHtEmitter
   I64 loop_top;
   I64 *needs_ctx;	//plan 011: per-func-node, threads CHtCtx *ctx
   Bool has_ctx;		//plan 011: any per-invocation global exists
+  Bool f32;		//plan 013: emit llvmpipe-reproducing F32 semantics
 };
+
+//plan 013: F32-semantics mode default (ON). HT.HC flips it off from the
+//HOLYTOY_F32=0 escape knob (E:/F32.TXT), mirroring the SCALE.TXT plumbing.
+Bool ht_f32_mode=TRUE;
+
+Bool HtF32Elem(I64 t)
+{//value whose components are floats (scalar float, float vector, or matrix)
+  I64 k=HtTKind(t);
+  return k==HTT_FLOAT || HtTIsFVec(k) || HtTIsMat(k);
+}
 
 Bool HtOutGrow(CHtEmitter *e,I64 extra)
 {
@@ -275,7 +286,13 @@ U0 HtEmNumText(CHtEmitter *e,I64 tok,U8 *buf)
       i++;
     }
   }
-  StrCpy(buf,m0);
+  //plan 013: in F32 mode wrap float literals so the constant is used as an
+  //exact F32 value (HtF32 returns the exact F64 image of the rounded F32),
+  //keeping downstream products exact-in-F64. Non-float literals are unchanged.
+  if (e->f32)
+    StrPrint(buf,"HtF32(%s)",m0);
+  else
+    StrCpy(buf,m0);
 }
 
 //--- expression emission ---------------------------------------------------------
@@ -535,6 +552,7 @@ U0 HtEmBinComp(CHtEmitter *e,CHtVal *out,CHtVal *a,CHtVal *b,U8 *op,
                Bool mask)
 {
   I64 cnt=HtCompCount(HtTKind(out->type)),c;
+  Bool f=e->f32 && HtF32Elem(out->type);	//plan 013: round float results
   U8 d[112],x[112],y[112];
   for (c=0;c<cnt;c++) {
     HtValComp(e,out,c,d);
@@ -542,6 +560,8 @@ U0 HtEmBinComp(CHtEmitter *e,CHtVal *out,CHtVal *a,CHtVal *b,U8 *op,
     HtValComp(e,b,c,y);
     if (mask)
       HtOutF(e,"%s=(((%s)%s(%s))&0xFFFFFFFF);\n",d,x,op,y);
+    else if (f)
+      HtOutF(e,"%s=HtF32((%s)%s(%s));\n",d,x,op,y);
     else
       HtOutF(e,"%s=((%s)%s(%s));\n",d,x,op,y);
   }
@@ -556,6 +576,8 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
   U8 op[4],d[112],x[112],y[112],pa[112],pb[112];
   CHtLexer *l=p->lex;
   Bool mask=HtElemIsUint(n->type);
+  U8 *fs="";			//plan 013: F32 suffix for matrix helpers
+  if (e->f32) fs="F32";
   HtTokText(l,n->tok,op,4);
   //short-circuit logical ops
   if (HtTokEq(l,n->tok,"&&") || HtTokEq(l,n->tok,"||")) {
@@ -617,7 +639,7 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
         else StrPrint(y,"%s.m",b.text);
         if (t.is_ptr) StrPrint(d,"%s->m",t.text);
         else StrPrint(d,"%s.m",t.text);
-        HtOutF(e,"HtMMulM(%s,%s,%s,%d);\n",d,x,y,msz);
+        HtOutF(e,"HtMMulM%s(%s,%s,%s,%d);\n",fs,d,x,y,msz);
         MemCpy(out,&t,sizeof(CHtVal));
         return;
       }
@@ -626,7 +648,7 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
         HtValAddr(e,&t,d);
         HtValAddr(e,&a,pa);
         HtValAddr(e,&b,pb);
-        HtOutF(e,"HtM%dMulV(%s,%s,%s);\n",HtMatSize(ak),d,pa,pb);
+        HtOutF(e,"HtM%dMulV%s(%s,%s,%s);\n",HtMatSize(ak),fs,d,pa,pb);
         MemCpy(out,&t,sizeof(CHtVal));
         return;
       }
@@ -635,7 +657,7 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
         HtValAddr(e,&t,d);
         HtValAddr(e,&a,pa);
         HtValAddr(e,&b,pb);
-        HtOutF(e,"HtVMulM%d(%s,%s,%s);\n",HtMatSize(bk),d,pa,pb);
+        HtOutF(e,"HtVMulM%d%s(%s,%s,%s);\n",HtMatSize(bk),fs,d,pa,pb);
         MemCpy(out,&t,sizeof(CHtVal));
         return;
       }
@@ -651,6 +673,8 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
     HtNewTmp(e,n->type,&t);
     if (mask)
       HtOutF(e,"%s=(((%s)%s(%s))&0xFFFFFFFF);\n",t.text,a.text,op,b.text);
+    else if (e->f32 && rk==HTT_FLOAT)	//plan 013: round float arithmetic
+      HtOutF(e,"%s=HtF32((%s)%s(%s));\n",t.text,a.text,op,b.text);
     else
       HtOutF(e,"%s=((%s)%s(%s));\n",t.text,a.text,op,b.text);
     MemCpy(out,&t,sizeof(CHtVal));
@@ -684,8 +708,12 @@ U0 HtEmCtor(CHtEmitter *e,I64 i,CHtVal *out)
     HtValComp(e,&av[0],0,s2);
     if (k==HTT_BOOL)
       HtOutF(e,"%s=((%s)!=0);\n",t.text,s2);
-    else if (k==HTT_FLOAT)
-      HtOutF(e,"%s=(%s);\n",t.text,s2);	//auto int->float
+    else if (k==HTT_FLOAT) {
+      if (e->f32)			//plan 013: float(int) rounds to F32
+        HtOutF(e,"%s=HtF32(%s);\n",t.text,s2);
+      else
+        HtOutF(e,"%s=(%s);\n",t.text,s2);	//auto int->float
+    }
     else if (at==HTT_FLOAT) {
       if (k==HTT_UINT)
         HtOutF(e,"%s=(ToI64(%s)&0xFFFFFFFF);\n",t.text,s2);
@@ -765,9 +793,12 @@ U0 HtEmCtorConv(CHtEmitter *e,I64 dst_kind,I64 src_kind,U8 *d,U8 *s)
   if (HtTIsScalar(src_kind)) se=src_kind;
   else se=HtVecElem(src_kind);
   if (de==HTT_NONE) de=dst_kind;
-  if (de==HTT_FLOAT)
-    HtOutF(e,"%s=(%s);\n",d,s);
-  else if (de==HTT_BOOL)
+  if (de==HTT_FLOAT) {
+    if (e->f32)				//plan 013: int->float rounds to F32
+      HtOutF(e,"%s=HtF32(%s);\n",d,s);
+    else
+      HtOutF(e,"%s=(%s);\n",d,s);
+  } else if (de==HTT_BOOL)
     HtOutF(e,"%s=((%s)!=0);\n",d,s);
   else if (se==HTT_FLOAT) {
     if (de==HTT_UINT)
@@ -853,15 +884,19 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   I64 arg=n->b,n_args=0,bi=n->c,c,cnt,vs,msz,r;
   U8 d[112],x[112],y[112],pa[112],pb[112],pc[112];
   U8 *fn1=NULL;
+  U8 *fs="";		//plan 013: F32 suffix for cross-component helpers
+  if (e->f32) fs="F32";
   while (arg>=0 && n_args<4) {
     HtEmExpr(e,arg,&av[n_args]);
     av[n_args].type=p->node[arg].type;
     n_args++;
     arg=p->node[arg].next;
   }
-  //simple componentwise 1-arg float builtins
-  if (bi==HT_BI_SIN) fn1="HtSinF";
-  else if (bi==HT_BI_COS) fn1="HtCosF";
+  //simple componentwise 1-arg float builtins. plan 013: in F32 mode route
+  //sin/cos to the gallivm Cephes-F32 replica and wrap sqrt/inversesqrt/fract
+  //so the result is rounded to F32 (the design's builtin table).
+  if (bi==HT_BI_SIN) { if (e->f32) fn1="HtSinF32"; else fn1="HtSinF"; }
+  else if (bi==HT_BI_COS) { if (e->f32) fn1="HtCosF32"; else fn1="HtCosF"; }
   else if (bi==HT_BI_TAN) fn1="HtTanF";
   else if (bi==HT_BI_ASIN) fn1="HtASinF";
   else if (bi==HT_BI_ACOS) fn1="HtACosF";
@@ -869,11 +904,13 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   else if (bi==HT_BI_LOG) fn1="Ln";
   else if (bi==HT_BI_EXP2) fn1="HtExp2F";
   else if (bi==HT_BI_LOG2) fn1="Log2";
-  else if (bi==HT_BI_SQRT) fn1="Sqrt";
-  else if (bi==HT_BI_INVSQRT) fn1="HtInvSqrt";
+  else if (bi==HT_BI_SQRT) { if (e->f32) fn1="HtSqrtF32"; else fn1="Sqrt"; }
+  else if (bi==HT_BI_INVSQRT) {
+    if (e->f32) fn1="HtInvSqrtF32"; else fn1="HtInvSqrt";
+  }
   else if (bi==HT_BI_FLOOR) fn1="Floor";
   else if (bi==HT_BI_CEIL) fn1="Ceil";
-  else if (bi==HT_BI_FRACT) fn1="HtFract";
+  else if (bi==HT_BI_FRACT) { if (e->f32) fn1="HtFractF32"; else fn1="HtFract"; }
   else if (bi==HT_BI_ROUND) fn1="Round";
   else if (bi==HT_BI_TRUNC) fn1="Trunc";
   if (fn1) {
@@ -920,6 +957,7 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   if (bi==HT_BI_POW || bi==HT_BI_MOD) {
     HtNewTmp(e,n->type,&t);
     if (bi==HT_BI_POW) HtEmCompwise2(e,&t,&av[0],&av[1],"Pow");
+    else if (e->f32) HtEmCompwise2(e,&t,&av[0],&av[1],"HtModF32");
     else HtEmCompwise2(e,&t,&av[0],&av[1],"HtModF");
     MemCpy(out,&t,sizeof(CHtVal));
     return;
@@ -947,7 +985,8 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   }
   if (bi==HT_BI_MIX) {
     HtNewTmp(e,n->type,&t);
-    HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixF");
+    if (e->f32) HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixF32");
+    else HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixF");
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }
@@ -969,11 +1008,11 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
     HtValAddr(e,&av[0],pa);
     if (bi==HT_BI_LENGTH) {
       HtNewTmp(e,HTT_FLOAT,&t);
-      HtOutF(e,"%s=HtV%dLen(%s);\n",t.text,vs,pa);
+      HtOutF(e,"%s=HtV%dLen%s(%s);\n",t.text,vs,fs,pa);
     } else {
       HtNewTmp(e,n->type,&t);
       HtValAddr(e,&t,d);
-      HtOutF(e,"HtV%dNorm(%s,%s);\n",vs,d,pa);
+      HtOutF(e,"HtV%dNorm%s(%s,%s);\n",vs,fs,d,pa);
     }
     MemCpy(out,&t,sizeof(CHtVal));
     return;
@@ -983,9 +1022,9 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
     HtValAddr(e,&av[1],pb);
     HtNewTmp(e,HTT_FLOAT,&t);
     if (bi==HT_BI_DOT)
-      HtOutF(e,"%s=HtV%dDot(%s,%s);\n",t.text,vs,pa,pb);
+      HtOutF(e,"%s=HtV%dDot%s(%s,%s);\n",t.text,vs,fs,pa,pb);
     else
-      HtOutF(e,"%s=HtV%dDist(%s,%s);\n",t.text,vs,pa,pb);
+      HtOutF(e,"%s=HtV%dDist%s(%s,%s);\n",t.text,vs,fs,pa,pb);
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }
@@ -994,7 +1033,7 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
     HtValAddr(e,&av[1],pb);
     HtNewTmp(e,n->type,&t);
     HtValAddr(e,&t,d);
-    HtOutF(e,"HtV3Cross(%s,%s,%s);\n",d,pa,pb);
+    HtOutF(e,"HtV3Cross%s(%s,%s,%s);\n",fs,d,pa,pb);
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }
@@ -1003,7 +1042,7 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
     HtValAddr(e,&av[1],pb);
     HtNewTmp(e,n->type,&t);
     HtValAddr(e,&t,d);
-    HtOutF(e,"HtV%dReflect(%s,%s,%s);\n",vs,d,pa,pb);
+    HtOutF(e,"HtV%dReflect%s(%s,%s,%s);\n",vs,fs,d,pa,pb);
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }
@@ -1445,6 +1484,8 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
       CHtVal cur,res;
       U8 op2[4],pa2[112],pb2[112],pd2[112];
       Bool mask=HtElemIsUint(lv.type);
+      U8 *fs="";			//plan 013: F32 suffix (HolyC has no ternary)
+      if (e->f32) fs="F32";
       op2[0]=op[0];			//first char is the operator
       op2[1]=0;
       if (op[0]=='<' || op[0]=='>') {
@@ -1458,6 +1499,8 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
         if (mask)
           HtOutF(e,"%s=(((%s)%s(%s))&0xFFFFFFFF);\n",
                  res.text,cur.text,op2,b.text);
+        else if (e->f32 && k==HTT_FLOAT)	//plan 013: round float result
+          HtOutF(e,"%s=HtF32((%s)%s(%s));\n",res.text,cur.text,op2,b.text);
         else
           HtOutF(e,"%s=((%s)%s(%s));\n",res.text,cur.text,op2,b.text);
       } else if (HtTIsMat(k) && op[0]=='*' &&
@@ -1467,14 +1510,16 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
         if (b.is_ptr) StrPrint(pb2,"%s->m",b.text);
         else StrPrint(pb2,"%s.m",b.text);
         StrPrint(pd2,"%s.m",res.text);
-        HtOutF(e,"HtMMulM(%s,%s,%s,%d);\n",pd2,pa2,pb2,HtMatSize(k));
+        HtOutF(e,"HtMMulM%s(%s,%s,%s,%d);\n",
+               fs,pd2,pa2,pb2,HtMatSize(k));
       } else if (HtTIsFVec(k) && op[0]=='*' &&
                  HtTIsMat(HtTKind(p->node[n->b].type))) {
         HtValAddr(e,&cur,pa2);
         HtValAddr(e,&b,pb2);
         StrPrint(pd2,"&%s",res.text);
-        HtOutF(e,"HtVMulM%d(%s,%s,%s);\n",
-               HtMatSize(HtTKind(p->node[n->b].type)),pd2,pa2,pb2);
+        HtOutF(e,"HtVMulM%d%s(%s,%s,%s);\n",
+               HtMatSize(HtTKind(p->node[n->b].type)),fs,
+               pd2,pa2,pb2);
       } else
         HtEmBinComp(e,&res,&cur,&b,op2,mask);
       HtEmStore(e,&lv,&res);
@@ -1971,6 +2016,7 @@ U8 *HtEmit(CHtProgram *p)
   I64 *emitted,*visiting;
   MemSet(&e,0,sizeof(CHtEmitter));
   e.prog=p;
+  e.f32=ht_f32_mode;		//plan 013: F32 semantics (default ON)
   e.cap=p->lex->src_len*8+4096;
   e.buf=MAlloc(e.cap);
   e.buf[0]=0;

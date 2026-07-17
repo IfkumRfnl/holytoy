@@ -6,3 +6,5 @@ out/
 # Reference clone of TempleOS source (managed by a parallel agent)
 vendor/
 __pycache__/
+/images
+/out
