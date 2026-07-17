@@ -1,6 +1,10 @@
 # Plan 011: Per-invocation context ABI (`ht_fp` reentrancy + GLSL global semantics)
 
-Status: TODO. Designed 2026-07-17 by an Opus 4.8 design agent (probe
+Status: DONE (branch `plan-011-ctx-abi`, 2026-07-17). ABI landed as
+specified; `make test` 13/13 + `HT CTX OK`; corpus v2 stratum A 39/39
+compile/install/exec, visual 28/39 (unchanged vs the plan-010 baseline).
+NOT merged to main (implementer instruction). See "## Completion evidence".
+Designed 2026-07-17 by an Opus 4.8 design agent (probe
 `run-20260717-151439-mMR74p` verified the resident-bind mechanism and the
 ~6 ns/call ctx cost). Prerequisite for plan 012 (multicore shading) and
 scheduled before plan 013 (F32) because both rewrite HTEMIT.HC emission.
@@ -212,3 +216,82 @@ Caller edits (all four are simple, and remove the stamp/sentinel dance):
 3. **Should `HtShaderInit`/`HtCtxInit` be inlined into the glue** rather than emitted as separate functions? Separate functions are clearer and the call cost is negligible (probe); left as an implementer preference.
 4. **SMP worker API.** This doc fixes only the `ht_fp` reentrancy contract and the `ht_frame`/`HtFrameSetup` seam. The worker partition scheme, `Spawn`/join, and per-worker output buffers belong to the parallel multicore-renderer design; they must honor the §4 contract (fill `ht_frame` before fan-out; private `CHtFragColor`; install only between joined frames).
 5. **Interaction with the fast-F32 track (plan 011).** F32 semantics change the arithmetic inside generated code and `HtSinF`, orthogonal to this state split; no ordering dependency, but both touch generated `MainImage` output, so land and re-measure the visual oracle once rather than twice if scheduled together.
+
+---
+
+## Completion evidence
+
+Implemented on branch `plan-011-ctx-abi` (2026-07-17), not merged to main
+(implementer instruction). Commits:
+
+- `4d04be8` compiler: HTLOWER classification (`CHtSym.per_inv`,
+  `HtGlobalPerInvocation`, `HtInitStaticSafe`, decl-order bucketing) +
+  HTEMIT ctx ABI (`HtSymRef`, `class CHtCtx`, `HtCtxInit`, reentrant
+  `MainImage` glue, `ht_frame.*` uniform reads, `needs_ctx` fixpoint,
+  ctx-first parameter/argument threading).
+- `f41a0ac` runtime: `CHtFrame ht_frame` + `HtFrameSetup`, retyped
+  `ht_fp`/`ht_default_fp`/`ht_new_fp`/built-in `MainImage`, updated
+  `HtDrawIt`/`HtVisualDump` (sentinel prime removed)/`HtCorpusRun` callers,
+  `HT CTX OK` self-test + test.sh proof-6 gate.
+- `c29150b` docs note `docs/notes/ctx-frame-abi.md`.
+
+### As landed (for plan-012/013 implementers)
+
+- **ABI:** `U0 ht_fp(F64 frag_x, F64 frag_y, CHtFragColor *out_color)`.
+  Exactly as specified; `u` dropped, ctx is glue-local (never an ABI param).
+- **`CHtFrame`** (HT.HC, declared before the built-in `MainImage`):
+  `F64 itime,itdelta,ifrate; CHtV3 ires; CHtV4 imouse,idate; I64 iframe;`.
+  Global `CHtFrame ht_frame;`.
+- **`U0 HtFrameSetup(CHtUniforms *u)`** fills `ht_frame` from the raw
+  `CHtUniforms` once per frame on the control core (the old stamp block
+  verbatim; still hardcodes `itdelta=1/30`, `ifrate=30`). Callers:
+  `HtDrawIt` (before the shade loops), `HtVisualDump` (once, after setting
+  the pinned state), `HtCorpusRun` (per shader, before the exec samples).
+- **Generated layout:** struct classes -> shared-const process globals ->
+  `class CHtCtx {...}` (only if non-empty) -> user functions (topo) ->
+  `HtCtxInit` (only if non-empty; `MemSet` + decl-order per-invocation
+  initializers) -> `MainImage` glue -> `HtShaderInit` (shared-const inits
+  only; may be empty; the `htu_stamp=-1` line is gone) -> `HtShaderInit;`.
+  `HtCtxInit` is emitted **before** `MainImage` (no HolyC prototypes).
+- **ctx threading:** `needs_ctx[F] = F directly touches a per-invocation
+  global OR any transitive callee does`; `mainImage` forced true when the
+  per-invocation set is non-empty. Canonical order everywhere:
+  **`ctx`, then composite-return pointer, then declared params**. Glue owns
+  `CHtCtx ctx_store; CHtCtx *ctx=&ctx_store;` so forwarding is the bare
+  token `ctx` and every reference is `ctx->ug<s>_<name>`. Landed the
+  only-if-touches variant (the always-pass fallback was not needed).
+- Zero per-invocation globals => no `CHtCtx`/init/plumbing emitted; the
+  no-global path is bit-identical to pre-011 minus the stamp block.
+
+### Verification
+
+- **`make test` 13/13** (`-- 13 passed, 0 failed --`). The `holytoy` proof
+  now also greps `HT CTX OK`. Self-test markers observed in
+  `run-20260717-154034-lbWq1Q`: SWAP/IDENT/ERRSURVIVE/RECOVER/MATH/LIB/
+  DITHER/**CTX**/SCALE all OK.
+- **`HT CTX OK` fixture** (`ht_glsl_ctx`): a mutable global `g_acc=2`
+  bumped +2 through a nested helper chain (`mainImage`->`addTwo`->`addOne`)
+  reads back as 4 (=> r=1.0) on three consecutive `ht_fp` calls at one
+  point with no accumulation — guards the transitive `needs_ctx` analysis
+  and per-invocation re-init.
+- **VM spot checks:** `tests/glsl/gradient.glsl` (no globals,
+  `run-20260717-153942-VYqFaa`) and a mutable-global-via-nested-helper
+  shader (`run-20260717-154010-rl9jEh`) both `HT GUEST GLSL OK`.
+- **Corpus v2** (`run-20260717-154447-Ycxs8E`, `HOLYTOY_SCALE` default):
+
+  | metric | before (plan 010) | after (plan 011) |
+  |--------|-------------------|------------------|
+  | compile stratum A | 39/39 | 39/39 |
+  | install/exec stratum A | 39/39 | 39/39 |
+  | stratum B (texture) | 0/12 | 0/12 |
+  | visual stratum A | 28/39 | 28/39 |
+
+  17 of the 39 stratum-A shaders declare mutable globals and thus exercise
+  the per-invocation ctx path; all render within tolerance (write-before-
+  read, output unchanged). The 11 visual FAILs are the identical
+  documented white-noise-hash precision cluster (9 use `fract(sin(x)*<big>)`
+  directly; `Xlt3Dn`/`tlSSDV` use Dave-Hoskins `fract`-multiply hashes) —
+  the plan-010 LUT-sin/F64 deviation, not state handling. No shader crossed
+  the tolerance boundary; no movement outside the two legitimate change
+  classes (none were triggered — every corpus mutable global is
+  write-before-read). No STOP condition hit.
