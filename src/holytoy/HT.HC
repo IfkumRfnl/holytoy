@@ -800,6 +800,7 @@ U0 HtCorpusRun()
   I64 sz,i,k,n=0,pass=0;
   F64 t0,px,py;
   CHtCompileResult r;
+  CHtUniforms eu;
   CHtFragColor fc;
   Bool ok,vok;
   man=FileRead("E:/CORPUS.TXT",&sz);
@@ -849,7 +850,16 @@ U0 HtCorpusRun()
     }
     "HT CORPUS %s install OK\n",id;
     ok=TRUE;
-    HtFrameSetup(&ht_u);	//plan 011: fill ht_frame for the exec samples
+    //Pin the exec-sample uniforms to the oracle's state A (HtDrawIt keeps
+    //rewriting ht_u with live wall-clock time, and under F32 semantics a
+    //shader can legitimately overflow to inf at large iTime - plan 013's
+    //XdsGWH did). A MemSet'd local mirrors HtVisualDump's uniform state.
+    MemSet(&eu,0,sizeof(CHtUniforms));
+    eu.i_time=0.5;
+    eu.i_frame=15;
+    eu.res_x=640;
+    eu.res_y=288;
+    HtFrameSetup(&eu);
     t0=tS;
     try {
       for (k=0;k<4;k++) {
