@@ -306,6 +306,10 @@ images/          gitignored: ISO, golden.qcow2, persistent slot locks
 out/runs/        gitignored: per-VM dirs and persistent .registry.lock
 out/install/     gitignored: golden-image installation checkpoints
 plans/           ordered implementation plans and status index
+local/           gitignored, machine-local only: perf workloads whose
+                 licenses forbid redistribution (e.g. the plan-014 Greek
+                 Temple adaptation + its README). NEVER commit or copy
+                 its contents into the repo, corpus, or any published file.
 vendor/TempleOS  reference source (cia-foundation/TempleOS)
 skills/holyc     HolyC knowledge base (maintained by a parallel agent)
 docs/            VISION.md (v1 spec), img/

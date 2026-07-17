@@ -8,3 +8,5 @@ vendor/
 __pycache__/
 /images
 /out
+# Local-only workloads (licensed material; never commit anything under it)
+/local
