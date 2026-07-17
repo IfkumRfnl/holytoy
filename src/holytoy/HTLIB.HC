@@ -584,25 +584,24 @@ F64 HtCosF32(F64 x)
 //the emitter already emits. Used when a builtin result feeds an amplified
 //hash argument (Reinder fbm raymarchers route mat*vec/dot into sin).
 
+//dot reduces RIGHT-associatively in llvmpipe (probe: perR matches 100%),
+//i.e. x*x + (y*y + (z*z + w*w)); each product and add rounded to F32.
 F64 HtV2DotF32(CHtV2 *a,CHtV2 *b)
 {
-  F64 s=HtF32(a->x*b->x);
-  return HtF32(s+HtF32(a->y*b->y));
+  return HtF32(HtF32(a->x*b->x)+HtF32(a->y*b->y));
 }
 
 F64 HtV3DotF32(CHtV3 *a,CHtV3 *b)
 {
-  F64 s=HtF32(a->x*b->x);
-  s=HtF32(s+HtF32(a->y*b->y));
-  return HtF32(s+HtF32(a->z*b->z));
+  F64 s=HtF32(HtF32(a->y*b->y)+HtF32(a->z*b->z));
+  return HtF32(HtF32(a->x*b->x)+s);
 }
 
 F64 HtV4DotF32(CHtV4 *a,CHtV4 *b)
 {
-  F64 s=HtF32(a->x*b->x);
-  s=HtF32(s+HtF32(a->y*b->y));
-  s=HtF32(s+HtF32(a->z*b->z));
-  return HtF32(s+HtF32(a->w*b->w));
+  F64 s=HtF32(HtF32(a->z*b->z)+HtF32(a->w*b->w));
+  s=HtF32(HtF32(a->y*b->y)+s);
+  return HtF32(HtF32(a->x*b->x)+s);
 }
 
 F64 HtV2LenF32(CHtV2 *a)
@@ -714,71 +713,64 @@ U0 HtVMulM2F32(CHtV2 *out,CHtV2 *v,CHtM2 *m)
   out->y=y;
 }
 
+//matrix multiplies reduce right-associatively too (each output is a dot).
 U0 HtM3MulVF32(CHtV3 *out,CHtM3 *m,CHtV3 *v)
 {
-  F64 x=HtF32(m->m[0]*v->x),y=HtF32(m->m[1]*v->x),z=HtF32(m->m[2]*v->x);
-  x=HtF32(x+HtF32(m->m[3]*v->y)); y=HtF32(y+HtF32(m->m[4]*v->y));
-  z=HtF32(z+HtF32(m->m[5]*v->y));
-  x=HtF32(x+HtF32(m->m[6]*v->z)); y=HtF32(y+HtF32(m->m[7]*v->z));
-  z=HtF32(z+HtF32(m->m[8]*v->z));
-  out->x=x;
-  out->y=y;
-  out->z=z;
+  out->x=HtF32(HtF32(m->m[0]*v->x)+HtF32(HtF32(m->m[3]*v->y)+HtF32(m->m[6]*v->z)));
+  out->y=HtF32(HtF32(m->m[1]*v->x)+HtF32(HtF32(m->m[4]*v->y)+HtF32(m->m[7]*v->z)));
+  out->z=HtF32(HtF32(m->m[2]*v->x)+HtF32(HtF32(m->m[5]*v->y)+HtF32(m->m[8]*v->z)));
 }
 
 U0 HtVMulM3F32(CHtV3 *out,CHtV3 *v,CHtM3 *m)
 {
-  F64 x=HtF32(m->m[0]*v->x),y=HtF32(m->m[3]*v->x),z=HtF32(m->m[6]*v->x);
-  x=HtF32(x+HtF32(m->m[1]*v->y)); y=HtF32(y+HtF32(m->m[4]*v->y));
-  z=HtF32(z+HtF32(m->m[7]*v->y));
-  x=HtF32(x+HtF32(m->m[2]*v->z)); y=HtF32(y+HtF32(m->m[5]*v->z));
-  z=HtF32(z+HtF32(m->m[8]*v->z));
-  out->x=x;
-  out->y=y;
-  out->z=z;
+  out->x=HtF32(HtF32(m->m[0]*v->x)+HtF32(HtF32(m->m[1]*v->y)+HtF32(m->m[2]*v->z)));
+  out->y=HtF32(HtF32(m->m[3]*v->x)+HtF32(HtF32(m->m[4]*v->y)+HtF32(m->m[5]*v->z)));
+  out->z=HtF32(HtF32(m->m[6]*v->x)+HtF32(HtF32(m->m[7]*v->y)+HtF32(m->m[8]*v->z)));
 }
 
 U0 HtM4MulVF32(CHtV4 *out,CHtM4 *m,CHtV4 *v)
 {
-  F64 x=HtF32(m->m[0]*v->x),y=HtF32(m->m[1]*v->x),
-      z=HtF32(m->m[2]*v->x),w=HtF32(m->m[3]*v->x);
-  x=HtF32(x+HtF32(m->m[4]*v->y)); y=HtF32(y+HtF32(m->m[5]*v->y));
-  z=HtF32(z+HtF32(m->m[6]*v->y)); w=HtF32(w+HtF32(m->m[7]*v->y));
-  x=HtF32(x+HtF32(m->m[8]*v->z)); y=HtF32(y+HtF32(m->m[9]*v->z));
-  z=HtF32(z+HtF32(m->m[10]*v->z)); w=HtF32(w+HtF32(m->m[11]*v->z));
-  x=HtF32(x+HtF32(m->m[12]*v->w)); y=HtF32(y+HtF32(m->m[13]*v->w));
-  z=HtF32(z+HtF32(m->m[14]*v->w)); w=HtF32(w+HtF32(m->m[15]*v->w));
-  out->x=x;
-  out->y=y;
-  out->z=z;
-  out->w=w;
+  F64 sx,sy,sz,sw;
+  sx=HtF32(HtF32(m->m[8]*v->z)+HtF32(m->m[12]*v->w));
+  sx=HtF32(HtF32(m->m[4]*v->y)+sx);
+  out->x=HtF32(HtF32(m->m[0]*v->x)+sx);
+  sy=HtF32(HtF32(m->m[9]*v->z)+HtF32(m->m[13]*v->w));
+  sy=HtF32(HtF32(m->m[5]*v->y)+sy);
+  out->y=HtF32(HtF32(m->m[1]*v->x)+sy);
+  sz=HtF32(HtF32(m->m[10]*v->z)+HtF32(m->m[14]*v->w));
+  sz=HtF32(HtF32(m->m[6]*v->y)+sz);
+  out->z=HtF32(HtF32(m->m[2]*v->x)+sz);
+  sw=HtF32(HtF32(m->m[11]*v->z)+HtF32(m->m[15]*v->w));
+  sw=HtF32(HtF32(m->m[7]*v->y)+sw);
+  out->w=HtF32(HtF32(m->m[3]*v->x)+sw);
 }
 
 U0 HtVMulM4F32(CHtV4 *out,CHtV4 *v,CHtM4 *m)
 {
-  F64 x=HtF32(m->m[0]*v->x),y=HtF32(m->m[4]*v->x),
-      z=HtF32(m->m[8]*v->x),w=HtF32(m->m[12]*v->x);
-  x=HtF32(x+HtF32(m->m[1]*v->y)); y=HtF32(y+HtF32(m->m[5]*v->y));
-  z=HtF32(z+HtF32(m->m[9]*v->y)); w=HtF32(w+HtF32(m->m[13]*v->y));
-  x=HtF32(x+HtF32(m->m[2]*v->z)); y=HtF32(y+HtF32(m->m[6]*v->z));
-  z=HtF32(z+HtF32(m->m[10]*v->z)); w=HtF32(w+HtF32(m->m[14]*v->z));
-  x=HtF32(x+HtF32(m->m[3]*v->w)); y=HtF32(y+HtF32(m->m[7]*v->w));
-  z=HtF32(z+HtF32(m->m[11]*v->w)); w=HtF32(w+HtF32(m->m[15]*v->w));
-  out->x=x;
-  out->y=y;
-  out->z=z;
-  out->w=w;
+  F64 sx,sy,sz,sw;
+  sx=HtF32(HtF32(m->m[2]*v->z)+HtF32(m->m[3]*v->w));
+  sx=HtF32(HtF32(m->m[1]*v->y)+sx);
+  out->x=HtF32(HtF32(m->m[0]*v->x)+sx);
+  sy=HtF32(HtF32(m->m[6]*v->z)+HtF32(m->m[7]*v->w));
+  sy=HtF32(HtF32(m->m[5]*v->y)+sy);
+  out->y=HtF32(HtF32(m->m[4]*v->x)+sy);
+  sz=HtF32(HtF32(m->m[10]*v->z)+HtF32(m->m[11]*v->w));
+  sz=HtF32(HtF32(m->m[9]*v->y)+sz);
+  out->z=HtF32(HtF32(m->m[8]*v->x)+sz);
+  sw=HtF32(HtF32(m->m[14]*v->z)+HtF32(m->m[15]*v->w));
+  sw=HtF32(HtF32(m->m[13]*v->y)+sw);
+  out->w=HtF32(HtF32(m->m[12]*v->x)+sw);
 }
 
 U0 HtMMulMF32(F64 *out,F64 *a,F64 *b,I64 n)
-{//out = a*b, n x n column-major, per-op F32 rounding; out must not alias.
+{//out = a*b, n x n column-major, per-op right-assoc F32; out must not alias.
   I64 c,r,k;
   F64 s;
   for (c=0;c<n;c++)
     for (r=0;r<n;r++) {
-      s=HtF32(a[r]*b[c*n]);
-      for (k=1;k<n;k++)
-        s=HtF32(s+HtF32(a[k*n+r]*b[c*n+k]));
+      s=HtF32(a[(n-1)*n+r]*b[c*n+(n-1)]);
+      for (k=n-2;k>=0;k--)
+        s=HtF32(HtF32(a[k*n+r]*b[c*n+k])+s);
       out[c*n+r]=s;
     }
 }
