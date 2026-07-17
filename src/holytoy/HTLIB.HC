@@ -502,16 +502,20 @@ F64 htf_half,htf_one;
 
 U0 HtF32Init()
 {//fold the Cephes constants to F32; call once at startup after HtLibInit.
-  htf_fopi=HtF32(1.27323954473516);		//4/pi
+ //NOTE: TempleOS's float lexer corrupts literals with ~20 significant
+ //digits (verified: 2.4187564849853515625e-4 parses to 5.74e-5). Each
+ //constant below is a 9-significant-digit decimal, which numpy confirms
+ //rounds to the SAME F32 bit pattern as the exact gallivm constant.
+  htf_fopi=HtF32(1.273239545);			//4/pi
   htf_dp1=HtF32(-0.78515625);
-  htf_dp2=HtF32(-2.4187564849853515625e-4);
-  htf_dp3=HtF32(-3.77489497744594108e-8);
-  htf_sin0=HtF32(-1.9515295891e-4);
-  htf_sin1=HtF32(8.3321608736e-3);
-  htf_sin2=HtF32(-1.6666654611e-1);
-  htf_cos0=HtF32(2.443315711809948e-5);
-  htf_cos1=HtF32(-1.388731625493765e-3);
-  htf_cos2=HtF32(4.166664568298827e-2);
+  htf_dp2=HtF32(-2.418756485e-4);
+  htf_dp3=HtF32(-3.774894977e-8);
+  htf_sin0=HtF32(-1.951529589e-4);
+  htf_sin1=HtF32(8.332160874e-3);
+  htf_sin2=HtF32(-1.666665461e-1);
+  htf_cos0=HtF32(2.443315712e-5);
+  htf_cos1=HtF32(-1.388731625e-3);
+  htf_cos2=HtF32(4.166664568e-2);
   htf_half=HtF32(0.5);
   htf_one=HtF32(1.0);
 }
