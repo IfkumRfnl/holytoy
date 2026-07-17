@@ -1089,6 +1089,20 @@ if (FileFind("E:/CORES.TXT")) {
     Free(ht_cores_buf);
   }
 }
+//plan 013: HOLYTOY_F32=0 escape hatch (E:/F32.TXT holding "0") turns the
+//emitter's F32-semantics mode off so the F64 path can be A/B-checked.
+if (FileFind("E:/F32.TXT")) {
+  U8 *f32b;
+  I64 f32sz;
+  f32b=FileRead("E:/F32.TXT",&f32sz);
+  if (f32b) {
+    if (f32sz>0 && f32b[0]=='0') {
+      ht_f32_mode=FALSE;
+      "HT F32 MODE OFF\n";
+    }
+    Free(f32b);
+  }
+}
 StrCpy(ht_glsl_src,ht_glsl1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
@@ -1096,6 +1110,7 @@ ht_default_fp=ht_fp;
 HTMInit;			//build the LUT once, before any F3/GLSL shading
 HTRInit;			//build the palette LUT and Bayer offsets once
 HtLibInit;			//F64 sine table for generated shader code
+HtF32Init;			//plan 013: fold Cephes-F32 sin/cos constants
 ht_u.click_x=-1;
 ht_u.click_y=-1;
 ht_native_editor=FALSE;

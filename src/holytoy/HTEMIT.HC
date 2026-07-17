@@ -54,7 +54,18 @@ class CHtEmitter
   I64 loop_top;
   I64 *needs_ctx;	//plan 011: per-func-node, threads CHtCtx *ctx
   Bool has_ctx;		//plan 011: any per-invocation global exists
+  Bool f32;		//plan 013: emit llvmpipe-reproducing F32 semantics
 };
+
+//plan 013: F32-semantics mode default (ON). HT.HC flips it off from the
+//HOLYTOY_F32=0 escape knob (E:/F32.TXT), mirroring the SCALE.TXT plumbing.
+Bool ht_f32_mode=TRUE;
+
+Bool HtF32Elem(I64 t)
+{//value whose components are floats (scalar float, float vector, or matrix)
+  I64 k=HtTKind(t);
+  return k==HTT_FLOAT || HtTIsFVec(k) || HtTIsMat(k);
+}
 
 Bool HtOutGrow(CHtEmitter *e,I64 extra)
 {
@@ -275,7 +286,13 @@ U0 HtEmNumText(CHtEmitter *e,I64 tok,U8 *buf)
       i++;
     }
   }
-  StrCpy(buf,m0);
+  //plan 013: in F32 mode wrap float literals so the constant is used as an
+  //exact F32 value (HtF32 returns the exact F64 image of the rounded F32),
+  //keeping downstream products exact-in-F64. Non-float literals are unchanged.
+  if (e->f32)
+    StrPrint(buf,"HtF32(%s)",m0);
+  else
+    StrCpy(buf,m0);
 }
 
 //--- expression emission ---------------------------------------------------------
@@ -535,6 +552,7 @@ U0 HtEmBinComp(CHtEmitter *e,CHtVal *out,CHtVal *a,CHtVal *b,U8 *op,
                Bool mask)
 {
   I64 cnt=HtCompCount(HtTKind(out->type)),c;
+  Bool f=e->f32 && HtF32Elem(out->type);	//plan 013: round float results
   U8 d[112],x[112],y[112];
   for (c=0;c<cnt;c++) {
     HtValComp(e,out,c,d);
@@ -542,6 +560,8 @@ U0 HtEmBinComp(CHtEmitter *e,CHtVal *out,CHtVal *a,CHtVal *b,U8 *op,
     HtValComp(e,b,c,y);
     if (mask)
       HtOutF(e,"%s=(((%s)%s(%s))&0xFFFFFFFF);\n",d,x,op,y);
+    else if (f)
+      HtOutF(e,"%s=HtF32((%s)%s(%s));\n",d,x,op,y);
     else
       HtOutF(e,"%s=((%s)%s(%s));\n",d,x,op,y);
   }
@@ -651,6 +671,8 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
     HtNewTmp(e,n->type,&t);
     if (mask)
       HtOutF(e,"%s=(((%s)%s(%s))&0xFFFFFFFF);\n",t.text,a.text,op,b.text);
+    else if (e->f32 && rk==HTT_FLOAT)	//plan 013: round float arithmetic
+      HtOutF(e,"%s=HtF32((%s)%s(%s));\n",t.text,a.text,op,b.text);
     else
       HtOutF(e,"%s=((%s)%s(%s));\n",t.text,a.text,op,b.text);
     MemCpy(out,&t,sizeof(CHtVal));
@@ -684,8 +706,12 @@ U0 HtEmCtor(CHtEmitter *e,I64 i,CHtVal *out)
     HtValComp(e,&av[0],0,s2);
     if (k==HTT_BOOL)
       HtOutF(e,"%s=((%s)!=0);\n",t.text,s2);
-    else if (k==HTT_FLOAT)
-      HtOutF(e,"%s=(%s);\n",t.text,s2);	//auto int->float
+    else if (k==HTT_FLOAT) {
+      if (e->f32)			//plan 013: float(int) rounds to F32
+        HtOutF(e,"%s=HtF32(%s);\n",t.text,s2);
+      else
+        HtOutF(e,"%s=(%s);\n",t.text,s2);	//auto int->float
+    }
     else if (at==HTT_FLOAT) {
       if (k==HTT_UINT)
         HtOutF(e,"%s=(ToI64(%s)&0xFFFFFFFF);\n",t.text,s2);
@@ -765,9 +791,12 @@ U0 HtEmCtorConv(CHtEmitter *e,I64 dst_kind,I64 src_kind,U8 *d,U8 *s)
   if (HtTIsScalar(src_kind)) se=src_kind;
   else se=HtVecElem(src_kind);
   if (de==HTT_NONE) de=dst_kind;
-  if (de==HTT_FLOAT)
-    HtOutF(e,"%s=(%s);\n",d,s);
-  else if (de==HTT_BOOL)
+  if (de==HTT_FLOAT) {
+    if (e->f32)				//plan 013: int->float rounds to F32
+      HtOutF(e,"%s=HtF32(%s);\n",d,s);
+    else
+      HtOutF(e,"%s=(%s);\n",d,s);
+  } else if (de==HTT_BOOL)
     HtOutF(e,"%s=((%s)!=0);\n",d,s);
   else if (se==HTT_FLOAT) {
     if (de==HTT_UINT)
@@ -859,9 +888,11 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
     n_args++;
     arg=p->node[arg].next;
   }
-  //simple componentwise 1-arg float builtins
-  if (bi==HT_BI_SIN) fn1="HtSinF";
-  else if (bi==HT_BI_COS) fn1="HtCosF";
+  //simple componentwise 1-arg float builtins. plan 013: in F32 mode route
+  //sin/cos to the gallivm Cephes-F32 replica and wrap sqrt/inversesqrt/fract
+  //so the result is rounded to F32 (the design's builtin table).
+  if (bi==HT_BI_SIN) { if (e->f32) fn1="HtSinF32"; else fn1="HtSinF"; }
+  else if (bi==HT_BI_COS) { if (e->f32) fn1="HtCosF32"; else fn1="HtCosF"; }
   else if (bi==HT_BI_TAN) fn1="HtTanF";
   else if (bi==HT_BI_ASIN) fn1="HtASinF";
   else if (bi==HT_BI_ACOS) fn1="HtACosF";
@@ -869,11 +900,13 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   else if (bi==HT_BI_LOG) fn1="Ln";
   else if (bi==HT_BI_EXP2) fn1="HtExp2F";
   else if (bi==HT_BI_LOG2) fn1="Log2";
-  else if (bi==HT_BI_SQRT) fn1="Sqrt";
-  else if (bi==HT_BI_INVSQRT) fn1="HtInvSqrt";
+  else if (bi==HT_BI_SQRT) { if (e->f32) fn1="HtSqrtF32"; else fn1="Sqrt"; }
+  else if (bi==HT_BI_INVSQRT) {
+    if (e->f32) fn1="HtInvSqrtF32"; else fn1="HtInvSqrt";
+  }
   else if (bi==HT_BI_FLOOR) fn1="Floor";
   else if (bi==HT_BI_CEIL) fn1="Ceil";
-  else if (bi==HT_BI_FRACT) fn1="HtFract";
+  else if (bi==HT_BI_FRACT) { if (e->f32) fn1="HtFractF32"; else fn1="HtFract"; }
   else if (bi==HT_BI_ROUND) fn1="Round";
   else if (bi==HT_BI_TRUNC) fn1="Trunc";
   if (fn1) {
@@ -920,6 +953,7 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   if (bi==HT_BI_POW || bi==HT_BI_MOD) {
     HtNewTmp(e,n->type,&t);
     if (bi==HT_BI_POW) HtEmCompwise2(e,&t,&av[0],&av[1],"Pow");
+    else if (e->f32) HtEmCompwise2(e,&t,&av[0],&av[1],"HtModF32");
     else HtEmCompwise2(e,&t,&av[0],&av[1],"HtModF");
     MemCpy(out,&t,sizeof(CHtVal));
     return;
@@ -1458,6 +1492,8 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
         if (mask)
           HtOutF(e,"%s=(((%s)%s(%s))&0xFFFFFFFF);\n",
                  res.text,cur.text,op2,b.text);
+        else if (e->f32 && k==HTT_FLOAT)	//plan 013: round float result
+          HtOutF(e,"%s=HtF32((%s)%s(%s));\n",res.text,cur.text,op2,b.text);
         else
           HtOutF(e,"%s=((%s)%s(%s));\n",res.text,cur.text,op2,b.text);
       } else if (HtTIsMat(k) && op[0]=='*' &&
@@ -1971,6 +2007,7 @@ U8 *HtEmit(CHtProgram *p)
   I64 *emitted,*visiting;
   MemSet(&e,0,sizeof(CHtEmitter));
   e.prog=p;
+  e.f32=ht_f32_mode;		//plan 013: F32 semantics (default ON)
   e.cap=p->lex->src_len*8+4096;
   e.buf=MAlloc(e.cap);
   e.buf[0]=0;

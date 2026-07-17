@@ -174,6 +174,7 @@ if RUN_DIR="$RD" tools/run.sh src/holytoy/HT.HC; then
     if grep -q "HT SWAP OK" "$RD/guest.log" &&
        grep -q "HT ERRSURVIVE OK" "$RD/guest.log" &&
        grep -q "HT MATH OK" "$RD/guest.log" &&
+       grep -q "HT F32 OK" "$RD/guest.log" &&
        grep -q "HT DITHER OK" "$RD/guest.log" &&
        grep -q "HT CTX OK" "$RD/guest.log" &&
        grep -q "HT SCALE OK" "$RD/guest.log" &&

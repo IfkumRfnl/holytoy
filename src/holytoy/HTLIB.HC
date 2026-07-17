@@ -407,9 +407,175 @@ F64 HtF32FromBits(I64 bits)
   return *(&raw)(F64 *);
 }
 
+//--- plan 013: F32 semantics (bit-reproduce llvmpipe) ----------------------
+//The visual oracle renders through llvmpipe, which evaluates the shader in
+//IEEE-754 single precision. HolyToy stores floats as F64, so to converge the
+//fract(sin(x)*C) white-noise hash idiom (~5e4 gain) the generated code must
+//reproduce llvmpipe's F32 semantics BIT-FOR-BIT: round every float op/literal
+//to F32 (RNE) and replace sin/cos with a replica of gallivm's Cephes-F32
+//polynomial. Accuracy is the enemy -- a more accurate sine diverges from
+//llvmpipe's deliberately lossy F32 reduction. See plans/013.
+
+I64 HtF32BitsRNE(F64 x)
+{//IEEE-754 round-to-nearest-even of x into a 32-bit float bit pattern.
+ //Correct on normals, subnormals, overflow, inf and NaN (self-test gated).
+  F64 f=x;
+  I64 raw=*(&f)(I64 *),sign,e,man,e32,kept,rbits,half,inc,sig,shift,mask;
+  sign=(raw>>63)&1;
+  e=(raw>>52)&0x7FF;
+  man=raw&0xFFFFFFFFFFFFF;
+  if (e==0x7FF) {			//inf / NaN
+    if (man) return (sign<<31)|0x7FC00000;
+    return (sign<<31)|0x7F800000;
+  }
+  if (!e) return sign<<31;		//F64 subnormal/zero -> underflows F32
+  e32=e-1023+127;
+  if (e32>=0xFF) return (sign<<31)|0x7F800000;	//overflow -> inf
+  if (e32>=1) {				//normal F32: keep top 23 mantissa bits
+    kept=man>>29;
+    rbits=man&0x1FFFFFFF;		//low 29 bits
+    half=0x10000000;			//bit 28
+    inc=0;
+    if (rbits>half) inc=1;
+    else if (rbits==half) inc=kept&1;	//tie to even
+    kept+=inc;
+    if (kept==0x800000) {		//mantissa carry into exponent
+      kept=0;
+      e32++;
+      if (e32>=0xFF) return (sign<<31)|0x7F800000;
+    }
+    return (sign<<31)|(e32<<23)|kept;
+  }
+  //e32<=0: F32 subnormal or underflow to zero. Round the full 53-bit
+  //significand to a multiple of 2^-149 (=F32 subnormal step).
+  sig=(1<<52)|man;
+  shift=926-e;				//>=30 here (e<=896)
+  if (shift>=64) return sign<<31;
+  kept=sig>>shift;
+  mask=(1<<shift)-1;
+  rbits=sig&mask;
+  half=1<<(shift-1);
+  inc=0;
+  if (rbits>half) inc=1;
+  else if (rbits==half) inc=kept&1;
+  kept+=inc;
+  if (!kept) return sign<<31;
+  return (sign<<31)|kept;		//kept 0x800000 => smallest normal, exact
+}
+
+F64 HtF32(F64 x)
+{//round-to-nearest-even to F32, returned as F64 (an exact F32 value).
+  return HtF32FromBits(HtF32BitsRNE(x));
+}
+
+F64 HtFmaF32(F64 a,F64 b,F64 c)
+{//fused multiply-add reproduced: a*b+c is exact in F64 for F32 operands in
+ //the sine's controlled domain, so one round to F32 == a hardware FMA.
+  return HtF32(a*b+c);
+}
+
+F64 HtFractF32(F64 x)
+{
+  return HtF32(x-Floor(x));
+}
+
+F64 HtModF32(F64 x,F64 y)
+{//GLSL mod bit-reproduced: x - y*floor(x/y), each sub-op rounded to F32.
+  return HtF32(x-HtF32(y*Floor(HtF32(x/y))));
+}
+
+F64 HtSqrtF32(F64 x)
+{
+  return HtF32(Sqrt(x));
+}
+
+F64 HtInvSqrtF32(F64 x)
+{//gallivm inversesqrt = rcp(sqrt(x)); rcp = exact 1.0/x fdiv (two roundings).
+  return HtF32(1.0/HtF32(Sqrt(x)));
+}
+
+//gallivm Cephes-F32 sin/cos constants, folded to their F32 value once.
+F64 htf_fopi,htf_dp1,htf_dp2,htf_dp3;
+F64 htf_sin0,htf_sin1,htf_sin2;
+F64 htf_cos0,htf_cos1,htf_cos2;
+F64 htf_half,htf_one;
+
+U0 HtF32Init()
+{//fold the Cephes constants to F32; call once at startup after HtLibInit.
+  htf_fopi=HtF32(1.27323954473516);		//4/pi
+  htf_dp1=HtF32(-0.78515625);
+  htf_dp2=HtF32(-2.4187564849853515625e-4);
+  htf_dp3=HtF32(-3.77489497744594108e-8);
+  htf_sin0=HtF32(-1.9515295891e-4);
+  htf_sin1=HtF32(8.3321608736e-3);
+  htf_sin2=HtF32(-1.6666654611e-1);
+  htf_cos0=HtF32(2.443315711809948e-5);
+  htf_cos1=HtF32(-1.388731625493765e-3);
+  htf_cos2=HtF32(4.166664568298827e-2);
+  htf_half=HtF32(0.5);
+  htf_one=HtF32(1.0);
+}
+
+F64 HtSinCosF32(F64 x,I64 want_sin)
+{//Replica of gallivm lp_build_sin_or_cos (Cephes single-precision). Every
+ //arithmetic step is done in F64 and rounded to F32; each fma is HtFmaF32.
+ //cos is NOT sin(x+pi/2): its quadrant/sign logic differs (validated vs
+ //tools/glsl_ref.py). See plans/013 open question 5.
+  F64 xa,prod,y,xr,z,ys,yc,w,a,b,c,d,r;
+  I64 emm2_i,emm2_add,emm2_and,emm2c,sgn,poly_sin;
+  xa=HtF32(Abs(x));
+  prod=HtF32(xa*htf_fopi);
+  emm2_i=ToI64(prod);			//FPToSI: truncate toward zero (xa>=0)
+  emm2_add=emm2_i+1;
+  emm2_and=emm2_add&(~1);
+  y=HtF32(emm2_and);
+  xr=HtFmaF32(y,htf_dp1,xa);		//extended-precision argument reduction
+  xr=HtFmaF32(y,htf_dp2,xr);
+  xr=HtFmaF32(y,htf_dp3,xr);
+  z=HtF32(xr*xr);
+  //cos polynomial: ((yc*z)*z) - 0.5*z + 1.0
+  yc=htf_cos0;
+  yc=HtFmaF32(yc,z,htf_cos1);
+  yc=HtFmaF32(yc,z,htf_cos2);
+  a=HtF32(yc*z);
+  b=HtF32(a*z);
+  c=HtF32(htf_half*z);
+  d=HtF32(b-c);
+  yc=HtF32(d+htf_one);
+  //sin polynomial: fma(ys*z, xr, xr)
+  ys=htf_sin0;
+  ys=HtFmaF32(ys,z,htf_sin1);
+  ys=HtFmaF32(ys,z,htf_sin2);
+  w=HtF32(ys*z);
+  ys=HtFmaF32(w,xr,xr);
+  if (want_sin) {
+    poly_sin=!(emm2_and&2);
+    sgn=x<0.0;
+    if (emm2_add&4) sgn=!sgn;
+  } else {
+    emm2c=emm2_and-2;
+    poly_sin=!(emm2c&2);
+    sgn=!(emm2c&4);
+  }
+  if (poly_sin) r=ys;
+  else r=yc;
+  if (sgn) r=-r;
+  return r;
+}
+
+F64 HtSinF32(F64 x)
+{
+  return HtSinCosF32(x,1);
+}
+
+F64 HtCosF32(F64 x)
+{
+  return HtSinCosF32(x,0);
+}
+
 U0 HtLibSelfTest()
 {//Accuracy and semantics gate; the holytoy proof greps for HT LIB OK.
-  I64 i,ok=TRUE;
+  I64 i,ok=TRUE,ok2=TRUE;
   F64 a,err,maxerr=0.0;
   for (i=0;i<10000;i++) {
     a=(i-5000)*0.01;
@@ -426,4 +592,23 @@ U0 HtLibSelfTest()
     "HT LIB OK\n";
   else
     "HT LIB FAIL maxerr=%g\n",maxerr;
+  //plan 013: F32 RNE rounding gate. Host-verified bit patterns (normals,
+  //fixed-subnormal denormal branch, overflow) plus HtF32 idempotence.
+  HtF32Init;
+  if (HtF32BitsRNE(0.1)!=0x3DCCCCCD) ok2=FALSE;
+  if (HtF32BitsRNE(1.0/3.0)!=0x3EAAAAAB) ok2=FALSE;
+  if (HtF32BitsRNE(43758.5453)!=0x472AEE8C) ok2=FALSE;
+  if (HtF32BitsRNE(12.9898)!=0x414FD639) ok2=FALSE;
+  if (HtF32BitsRNE(78.233)!=0x429C774C) ok2=FALSE;
+  if (HtF32BitsRNE(-2.5)!=0xC0200000) ok2=FALSE;
+  if (HtF32BitsRNE(1.0)!=0x3F800000) ok2=FALSE;
+  if (HtF32BitsRNE(-2.0)!=0xC0000000) ok2=FALSE;
+  if (HtF32BitsRNE(1e39)!=0x7F800000) ok2=FALSE;
+  if (HtF32BitsRNE(1e-40)!=0x000116C2) ok2=FALSE;
+  if (HtF32BitsRNE(1.4e-45)!=0x00000001) ok2=FALSE;
+  if (HtF32(HtF32(0.1))!=HtF32(0.1)) ok2=FALSE;
+  if (ok2)
+    "HT F32 OK\n";
+  else
+    "HT F32 FAIL\n";
 }
