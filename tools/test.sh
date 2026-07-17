@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# holytoy proof suite. Thirteen round-trips through the real VM:
+# holytoy proof suite. Fourteen round-trips through the real VM:
 #   1. smoke        guest marker round-trip
 #   2. gradient     screenshot dimensions and colors
 #   3. error        guest compiler failure surfaces as exit 1
@@ -13,6 +13,7 @@
 #  11. circle       declarations/vectors/builtins compile and render geometry
 #  12. editor       native in-guest edit auto-compiles and changes the viewport
 #  13. oracle       guest visual sample dump matches the committed reference
+#  14. smp          single-core vs multicore render is byte-identical
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -400,6 +401,39 @@ if HOLYTOY_VISDUMP=1 RUN_DIR="$RD" tools/run.sh tests/glsl/gradient.glsl; then
 else
     RC=$?
     bad "oracle: run.sh exited $RC (run $RD)"
+fi
+
+# 14. smp: the multicore render fan-out is byte-identical to single-core.
+# Run the static gradient at the pinned scale once on one shading core and
+# once on four; the published viewport (crop 0,8,640x288, excludes the pane's
+# per-config %3dms readout) must hash identically. Deterministic by
+# construction: identical integer/F64 math, disjoint bands, snapshotted
+# uniforms (proof 9 already establishes intra-run determinism).
+smp_viewport_hash() {
+    # newest complete rolling frame's viewport hash for a finished run dir
+    local rd="$1" files last
+    files=("$rd"/frames/frame-*.png)
+    [ -e "${files[0]}" ] || return 1
+    last="${files[${#files[@]}-1]}"
+    python3 tools/imginfo.py "$last" --crop 0,8,640x288 --hash 2>/dev/null |
+        awk '{print $4}'
+}
+RD_C1="$(new_run_path smp-c1)"
+RD_C4="$(new_run_path smp-c4)"
+HASH_C1=""
+HASH_C4=""
+if HOLYTOY_CORES=1 RUN_DIR="$RD_C1" tools/run.sh tests/glsl/gradient.glsl &&
+   grep -q "HT GUEST GLSL OK" "$RD_C1/guest.log"; then
+    HASH_C1="$(smp_viewport_hash "$RD_C1")"
+fi
+if HOLYTOY_CORES=4 RUN_DIR="$RD_C4" tools/run.sh tests/glsl/gradient.glsl &&
+   grep -q "HT GUEST GLSL OK" "$RD_C4/guest.log"; then
+    HASH_C4="$(smp_viewport_hash "$RD_C4")"
+fi
+if [ -n "$HASH_C1" ] && [ -n "$HASH_C4" ] && [ "$HASH_C1" = "$HASH_C4" ]; then
+    ok "smp: CORES=1 and CORES=4 produced identical viewport $HASH_C1"
+else
+    bad "smp: viewport hash mismatch (cores1 '$HASH_C1' vs cores4 '$HASH_C4'; runs $RD_C1 $RD_C4)"
 fi
 
 echo "-- $PASS passed, $FAIL failed --"

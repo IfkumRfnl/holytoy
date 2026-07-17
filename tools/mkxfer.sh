@@ -64,6 +64,11 @@ fi
 if [ -n "${HOLYTOY_SCALE:-}" ]; then
     echo "$HOLYTOY_SCALE" | mcopy -o - x:/SCALE.TXT
 fi
+# Optional shading-core pin (plan 012): 1..mp_cnt shades in the background
+# render task, or "auto" for mp_cnt. HT.HC reads E:/CORES.TXT.
+if [ -n "${HOLYTOY_CORES:-}" ]; then
+    echo "$HOLYTOY_CORES" | mcopy -o - x:/CORES.TXT
+fi
 # Visual-oracle dump request: HT.HC writes V00A/V00B sample DATs after a
 # successful single-shader GLSL compile (plan 010).
 if [ -n "${HOLYTOY_VISDUMP:-}" ]; then
