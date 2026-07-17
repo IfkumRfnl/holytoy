@@ -985,7 +985,8 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   }
   if (bi==HT_BI_MIX) {
     HtNewTmp(e,n->type,&t);
-    HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixF");
+    if (e->f32) HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixF32");
+    else HtEmCompwise3(e,&t,&av[0],&av[1],&av[2],"HtMixF");
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }

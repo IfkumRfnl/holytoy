@@ -714,6 +714,11 @@ U0 HtVMulM2F32(CHtV2 *out,CHtV2 *v,CHtM2 *m)
 }
 
 //matrix multiplies reduce right-associatively too (each output is a dot).
+F64 HtMixF32(F64 a,F64 b,F64 t)
+{//GLSL mix = a + (b-a)*t, per-op F32 (probe: matches llvmpipe 100%).
+  return HtF32(a+HtF32(HtF32(b-a)*t));
+}
+
 U0 HtM3MulVF32(CHtV3 *out,CHtM3 *m,CHtV3 *v)
 {
   out->x=HtF32(HtF32(m->m[0]*v->x)+HtF32(HtF32(m->m[3]*v->y)+HtF32(m->m[6]*v->z)));
