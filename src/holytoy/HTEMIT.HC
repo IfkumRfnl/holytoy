@@ -1483,6 +1483,8 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
       CHtVal cur,res;
       U8 op2[4],pa2[112],pb2[112],pd2[112];
       Bool mask=HtElemIsUint(lv.type);
+      U8 *fs="";			//plan 013: F32 suffix (HolyC has no ternary)
+      if (e->f32) fs="F32";
       op2[0]=op[0];			//first char is the operator
       op2[1]=0;
       if (op[0]=='<' || op[0]=='>') {
@@ -1508,14 +1510,14 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
         else StrPrint(pb2,"%s.m",b.text);
         StrPrint(pd2,"%s.m",res.text);
         HtOutF(e,"HtMMulM%s(%s,%s,%s,%d);\n",
-               e->f32?"F32":"",pd2,pa2,pb2,HtMatSize(k));
+               fs,pd2,pa2,pb2,HtMatSize(k));
       } else if (HtTIsFVec(k) && op[0]=='*' &&
                  HtTIsMat(HtTKind(p->node[n->b].type))) {
         HtValAddr(e,&cur,pa2);
         HtValAddr(e,&b,pb2);
         StrPrint(pd2,"&%s",res.text);
         HtOutF(e,"HtVMulM%d%s(%s,%s,%s);\n",
-               HtMatSize(HtTKind(p->node[n->b].type)),e->f32?"F32":"",
+               HtMatSize(HtTKind(p->node[n->b].type)),fs,
                pd2,pa2,pb2);
       } else
         HtEmBinComp(e,&res,&cur,&b,op2,mask);
