@@ -576,6 +576,8 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
   U8 op[4],d[112],x[112],y[112],pa[112],pb[112];
   CHtLexer *l=p->lex;
   Bool mask=HtElemIsUint(n->type);
+  U8 *fs="";			//plan 013: F32 suffix for matrix helpers
+  if (e->f32) fs="F32";
   HtTokText(l,n->tok,op,4);
   //short-circuit logical ops
   if (HtTokEq(l,n->tok,"&&") || HtTokEq(l,n->tok,"||")) {
@@ -637,7 +639,7 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
         else StrPrint(y,"%s.m",b.text);
         if (t.is_ptr) StrPrint(d,"%s->m",t.text);
         else StrPrint(d,"%s.m",t.text);
-        HtOutF(e,"HtMMulM(%s,%s,%s,%d);\n",d,x,y,msz);
+        HtOutF(e,"HtMMulM%s(%s,%s,%s,%d);\n",fs,d,x,y,msz);
         MemCpy(out,&t,sizeof(CHtVal));
         return;
       }
@@ -646,7 +648,7 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
         HtValAddr(e,&t,d);
         HtValAddr(e,&a,pa);
         HtValAddr(e,&b,pb);
-        HtOutF(e,"HtM%dMulV(%s,%s,%s);\n",HtMatSize(ak),d,pa,pb);
+        HtOutF(e,"HtM%dMulV%s(%s,%s,%s);\n",HtMatSize(ak),fs,d,pa,pb);
         MemCpy(out,&t,sizeof(CHtVal));
         return;
       }
@@ -655,7 +657,7 @@ U0 HtEmBinary(CHtEmitter *e,I64 i,CHtVal *out)
         HtValAddr(e,&t,d);
         HtValAddr(e,&a,pa);
         HtValAddr(e,&b,pb);
-        HtOutF(e,"HtVMulM%d(%s,%s,%s);\n",HtMatSize(bk),d,pa,pb);
+        HtOutF(e,"HtVMulM%d%s(%s,%s,%s);\n",HtMatSize(bk),fs,d,pa,pb);
         MemCpy(out,&t,sizeof(CHtVal));
         return;
       }
@@ -882,6 +884,8 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
   I64 arg=n->b,n_args=0,bi=n->c,c,cnt,vs,msz,r;
   U8 d[112],x[112],y[112],pa[112],pb[112],pc[112];
   U8 *fn1=NULL;
+  U8 *fs="";		//plan 013: F32 suffix for cross-component helpers
+  if (e->f32) fs="F32";
   while (arg>=0 && n_args<4) {
     HtEmExpr(e,arg,&av[n_args]);
     av[n_args].type=p->node[arg].type;
@@ -1003,11 +1007,11 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
     HtValAddr(e,&av[0],pa);
     if (bi==HT_BI_LENGTH) {
       HtNewTmp(e,HTT_FLOAT,&t);
-      HtOutF(e,"%s=HtV%dLen(%s);\n",t.text,vs,pa);
+      HtOutF(e,"%s=HtV%dLen%s(%s);\n",t.text,vs,fs,pa);
     } else {
       HtNewTmp(e,n->type,&t);
       HtValAddr(e,&t,d);
-      HtOutF(e,"HtV%dNorm(%s,%s);\n",vs,d,pa);
+      HtOutF(e,"HtV%dNorm%s(%s,%s);\n",vs,fs,d,pa);
     }
     MemCpy(out,&t,sizeof(CHtVal));
     return;
@@ -1017,9 +1021,9 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
     HtValAddr(e,&av[1],pb);
     HtNewTmp(e,HTT_FLOAT,&t);
     if (bi==HT_BI_DOT)
-      HtOutF(e,"%s=HtV%dDot(%s,%s);\n",t.text,vs,pa,pb);
+      HtOutF(e,"%s=HtV%dDot%s(%s,%s);\n",t.text,vs,fs,pa,pb);
     else
-      HtOutF(e,"%s=HtV%dDist(%s,%s);\n",t.text,vs,pa,pb);
+      HtOutF(e,"%s=HtV%dDist%s(%s,%s);\n",t.text,vs,fs,pa,pb);
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }
@@ -1028,7 +1032,7 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
     HtValAddr(e,&av[1],pb);
     HtNewTmp(e,n->type,&t);
     HtValAddr(e,&t,d);
-    HtOutF(e,"HtV3Cross(%s,%s,%s);\n",d,pa,pb);
+    HtOutF(e,"HtV3Cross%s(%s,%s,%s);\n",fs,d,pa,pb);
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }
@@ -1037,7 +1041,7 @@ U0 HtEmBuiltin(CHtEmitter *e,I64 i,CHtVal *out)
     HtValAddr(e,&av[1],pb);
     HtNewTmp(e,n->type,&t);
     HtValAddr(e,&t,d);
-    HtOutF(e,"HtV%dReflect(%s,%s,%s);\n",vs,d,pa,pb);
+    HtOutF(e,"HtV%dReflect%s(%s,%s,%s);\n",vs,fs,d,pa,pb);
     MemCpy(out,&t,sizeof(CHtVal));
     return;
   }
@@ -1503,14 +1507,16 @@ U0 HtEmExpr(CHtEmitter *e,I64 i,CHtVal *out)
         if (b.is_ptr) StrPrint(pb2,"%s->m",b.text);
         else StrPrint(pb2,"%s.m",b.text);
         StrPrint(pd2,"%s.m",res.text);
-        HtOutF(e,"HtMMulM(%s,%s,%s,%d);\n",pd2,pa2,pb2,HtMatSize(k));
+        HtOutF(e,"HtMMulM%s(%s,%s,%s,%d);\n",
+               e->f32?"F32":"",pd2,pa2,pb2,HtMatSize(k));
       } else if (HtTIsFVec(k) && op[0]=='*' &&
                  HtTIsMat(HtTKind(p->node[n->b].type))) {
         HtValAddr(e,&cur,pa2);
         HtValAddr(e,&b,pb2);
         StrPrint(pd2,"&%s",res.text);
-        HtOutF(e,"HtVMulM%d(%s,%s,%s);\n",
-               HtMatSize(HtTKind(p->node[n->b].type)),pd2,pa2,pb2);
+        HtOutF(e,"HtVMulM%d%s(%s,%s,%s);\n",
+               HtMatSize(HtTKind(p->node[n->b].type)),e->f32?"F32":"",
+               pd2,pa2,pb2);
       } else
         HtEmBinComp(e,&res,&cur,&b,op2,mask);
       HtEmStore(e,&lv,&res);
