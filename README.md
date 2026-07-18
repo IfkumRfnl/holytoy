@@ -2,54 +2,118 @@
 
 **Shadertoy, but it's TempleOS.**
 
-Live-code per-pixel graphics in [HolyC](https://templeos.org), running on
-real TempleOS in QEMU. Save a file on Linux; ~20 seconds later you have a
-screenshot of what the Temple drew — or a live window, if you want to
-watch it move.
+![Matrix rain GLSL shader animating inside HolyToy on TempleOS](docs/img/demo.gif)
 
-![16-color gradient rendered by TempleOS](docs/img/gradient.png)
+*That is [\[SH17A\] Matrix rain](https://www.shadertoy.com/view/ldjBW1) by
+[Reinder Nijhoff](https://www.shadertoy.com/user/reinder)
+([CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)) —
+unmodified GLSL from Shadertoy, compiled to HolyC **by a compiler that runs
+inside TempleOS**, JIT-ted into the kernel, and rendered live at
+640×480 in 16 colors. The whole shader is sitting in the editor pane below
+the viewport. Nothing here is mocked: that's a real TempleOS status bar on
+top, real frame times on the left, and a real `EDIT` prompt at the bottom
+waiting for you to break something.*
 
-*`src/gradient.HC`, 15 lines of HolyC, captured straight from the VM by
-`make run`.*
+## What
+
+HolyToy is a [Shadertoy](https://www.shadertoy.com) clone that runs *inside*
+TempleOS: a code pane + live viewport. You type GLSL —
+`mainImage(fragColor, fragCoord)`, `iTime`, `iResolution`, `iMouse`,
+`iFrame`, the whole convention — and ~200 ms after you stop typing, an
+embedded GLSL→HolyC compiler (written in HolyC, of course) rebuilds your
+shader and the viewport picks it up mid-animation. A compile error never
+kills the app; the previous shader keeps animating while the message points
+at your typo.
+
+This repo is that app, plus the modern dev loop wrapped around it: edit a
+`.glsl` file on Linux, and ~20 seconds later a throwaway TempleOS VM has
+booted, compiled your shader **in the guest**, animated it, and left you a
+screenshot, frames, a GIF, logs, and an honest exit code.
+
+The canonical Shadertoy "new shader" template runs unmodified — save it as
+`rainbow.glsl` and:
+
+```glsl
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    vec2 uv = fragCoord/iResolution.xy;
+    vec3 col = 0.5 + 0.5*cos(iTime+uv.xyx+vec3(0,2,4));
+    fragColor = vec4(col,1.0);
+}
+```
+
+```sh
+make run SRC=rainbow.glsl    # headless: screenshot + GIF + logs
+make gui SRC=rainbow.glsl    # live QEMU window, edit inside TempleOS
+```
 
 ## Why
 
 TempleOS is a 64-bit, ring-0-only OS with a compiler that JITs code into
 the kernel *as you type it*, a 640×480×16-color VGA canvas, and a
 per-frame `draw_it` callback — it is, accidentally, a demoscene machine
-with native live-reload. holytoy turns that into a modern dev loop:
+with native live-reload. Terry Davis built the perfect shader toy host; he
+just didn't ship the shader toy. This is that.
 
-- **Edit on Linux, run on TempleOS** — file injection over a FAT32
-  transfer disk, zero clicking in the VM.
-- **Fast, honest feedback** — screenshot + guest logs + real exit codes.
-  TempleOS compiler errors land in your terminal, file and line included.
-- **Unbreakable** — the installed OS image is read-only; every run boots
-  a throwaway copy-on-write overlay. `make golden` rebuilds the whole OS
-  from the ISO, unattended, in about a minute.
+## Getting the shaders to actually run
 
-The destination is more ambitious: **a Shadertoy clone running inside
-TempleOS** — GLSL input box + live viewport, with GLSL compiled to HolyC
-inside the app, plus lookup-table math and palette-cycling tricks. That's
-the v1 spec, laid out in [docs/VISION.md](docs/VISION.md).
+GLSL assumes float32 hardware and sixteen million colors. TempleOS offers
+neither, so holytoy carries its own rendering stack:
+
+- **A real GLSL compiler in HolyC** — lexer, preprocessor, parser,
+  lowering, emitter: ~5,600 lines living in the guest, plus ~3,200 more of
+  math library, renderer, and app. Your shader becomes HolyC source that
+  TempleOS's own JIT compiles in milliseconds.
+- **Faithful float32** — arithmetic is emitted through x87 in
+  single-precision mode (~2.4 ns/op), reproducing IEEE float32 semantics,
+  so a shader picks the *same colors* here as under a desktop OpenGL
+  renderer — verified pixel-by-pixel against one.
+- **All cores shade** — the window manager keeps core 0; shader bands fan
+  out across the other cores into a double buffer. A slow shader can never
+  freeze the editor.
+- **Adaptive resolution** — a controller walks shade scale between 1:16
+  and 1:1 chasing interactive frame rates, with center-aligned bilinear
+  upsampling; pin it with `HOLYTOY_SCALE=1..16`.
+- **16 colors, spent wisely** — ordered (Bayer) dithering plus a
+  scene-adaptive palette: every few frames the app histograms what the
+  shader *wants* to draw and reprograms the sixteen VGA palette registers
+  to match. Frame-time telemetry sits in the status line, so slow is
+  visible, never mysterious.
+
+Does it work? There's a versioned corpus of **51 real Shadertoy shaders**
+(pinned, licensed, provenance-recorded) in `corpus/`. All 39 texture-free
+ones compile and render in the guest; 32 of those match the desktop
+OpenGL reference within the visual oracle's tolerance — path tracers,
+raymarched cities in the rain, Doom E1M1 — on an OS with no GPU driver, no
+floats in its palette, and no idea what a texture is.
+
+| ![Outrun](docs/img/gallery-outrun.png) | ![Doom 2](docs/img/gallery-doom.png) |
+|:--:|:--:|
+| [Outrun](https://www.shadertoy.com/view/Mdf3Dr) | [Doom 2](https://www.shadertoy.com/view/lsB3zD) |
+
+*Both by Reinder Nijhoff (CC BY-NC-SA 4.0), rendered by TempleOS.*
 
 ## Quickstart
 
 Needs: `qemu-system-x86_64`, `mtools`, `python3`, `ffmpeg`, `make`.
-No root, no KVM required (used automatically if present).
+No root. KVM is used if present, not required.
 
 ```sh
 make fetch-iso    # grab TempleOS 5.03 from templeos.org (~17 MB)
 make golden       # install TempleOS into images/golden.qcow2, unattended
-make test         # prove the loop end-to-end (12 VM tests)
+make test         # prove the whole loop: 17 proofs through real VMs
 
-make run SRC=src/gradient.HC     # one cycle -> prints an isolated RUN_DIR
-make run SRC=tests/glsl/live-gradient.glsl # GLSL compiled inside HolyToy
-make watch SRC=src/gradient.HC   # re-run on every save
-make gui SRC=src/gradient.HC     # live QEMU window, toy auto-runs
+make run SRC=tests/glsl/plasma.glsl   # one cycle -> isolated run dir
+make watch SRC=my-toy.glsl            # re-run on every save
+make gui SRC=my-toy.glsl              # live window; edit in TempleOS itself
 ```
 
-Your first toy is a `draw_it` callback — called every frame by the
-TempleOS window manager:
+Every run prints its own `RUN_DIR` containing `latest.png`, `anim.gif`,
+`frames/`, guest logs, and the transfer disk. Runs are isolated; three can
+fly in parallel.
+
+Prefer raw HolyC over GLSL? The harness runs `.HC` files too — your first
+toy is a `draw_it` callback and the OS calls it every frame:
 
 ```holyc
 U0 DrawIt(CTask *,CDC *dc)
@@ -63,56 +127,76 @@ U0 DrawIt(CTask *,CDC *dc)
 Fs->draw_it=&DrawIt;
 ```
 
-No `main`, no boilerplate — HolyC executes top to bottom, JIT-compiled
-inside the OS. Mind that sources must be plain ASCII (TempleOS predates
-UTF-8, gloriously).
+No `main`, no boilerplate — HolyC executes top to bottom. Sources must be
+plain ASCII (TempleOS predates UTF-8, gloriously).
 
 ## How it works, in one breath
 
-`make run` copies your source onto a FAT32 disk image with mtools, boots
-a fresh overlay of the golden TempleOS image headless, where a tiny boot
-hook mounts the disk and executes your code under `try/catch`; the guest
-writes status and logs back to the disk, holds the picture for the
-screenshot, and reboots — which, with `-no-reboot`, is how the VM says
-"done". The command prints the run directory containing `latest.png`, logs,
-frames, and its transfer disk. The harness even OCRs the screen (TempleOS's
-fixed 8×8 kernel font makes it pixel-exact) so tools — and AI agents — can
-*read* the Temple in that run's `screen.txt`.
+`make run` copies your source onto a FAT32 disk image with mtools, boots a
+fresh copy-on-write overlay of the golden TempleOS image headless, where a
+tiny boot hook mounts the disk and executes your code under `try/catch`;
+the guest writes status and logs back to the disk, holds the picture for
+the screenshot, and reboots — which, with `-no-reboot`, is how the VM says
+"done". TempleOS compiler errors land in your terminal, file and line
+included. The harness even OCRs the screen (TempleOS's fixed 8×8 kernel
+font makes it pixel-exact), so scripts — and AI agents — can *read* the
+Temple in each run's `screen.txt`.
+
+The installed OS image is read-only; every run boots a throwaway overlay.
+`make golden` rebuilds the whole OS from the ISO, unattended, in about a
+minute. You cannot brick it, and not for lack of trying.
 
 Everything operational — exit codes, artifact paths, guest-side rules,
-troubleshooting, golden-image surgery — lives in
-[AGENTS.md](AGENTS.md).
+troubleshooting, golden-image surgery — lives in [AGENTS.md](AGENTS.md).
 
 ## Proven by `make test`
 
-A host-only preflight first proves allocation/pruning atomicity, isolates
-individual deletion failures, and checks the corpus compatibility tooling.
-Then twelve real TempleOS VM proofs run:
+Seventeen proofs, every one through a real TempleOS VM — no mocks, the
+screenshots are the assertions. Highlights: a deliberate syntax error must
+surface the TempleOS compiler message on the host with a nonzero exit; the
+app must survive a bad recompile with the previous shader still animating;
+a host-injected mouse move must land on a target pixel and be observed by
+the guest; single-core and 8-core renders must be byte-identical; a
+1:16-scale bilinear upsample of a linear shader must equal its 1:1 render
+exactly; and QMP must drive the native TempleOS editor, debounce-compile,
+and change the viewport before the editor exits.
 
-1. a marker string round-trips host → guest → host;
-2. the gradient renders at 640×480 with 16 colors, screenshot verified;
-3. a deliberate syntax error surfaces the TempleOS compiler message on
-   the host with a nonzero exit;
-4. animated plasma produces distinct trailing frames and a GIF;
-5. two simultaneous VMs retain isolated markers, disks, and slot numbers;
-6. the HolyToy app hot-swaps shaders live, survives a bad compile with
-   the previous shader still animating, passes its fixed-point math
-   check, and shows a per-frame shading-time readout on screen;
-7. a `.glsl` file handed to the runner compiles inside the guest and
-   animates in the app viewport;
-8. a host-injected mouse move lands on a target pixel (±16) and the
-   guest observes the click;
-9. a static GLSL gradient has deterministic viewport pixels, spatially
-   varying ordered dithering, and a sane 16-color gamut;
-10. raw GLSL compiles in the guest and renders through the app renderer;
-11. declarations, vectors, swizzles, constructors, `length`, and `step`
-    compile in the guest and render a centered circle;
-12. QMP drives the native TempleOS editor, debounce compilation succeeds,
-    and the viewport changes before the editor exits.
+<details>
+<summary>All seventeen</summary>
+
+1. **smoke** — a marker string round-trips host → guest → host
+2. **gradient** — 640×480, 16 colors, screenshot-verified
+3. **error** — guest compiler failure surfaces as exit 1 with the message
+4. **animate** — plasma produces distinct trailing frames and a GIF
+5. **parallel** — simultaneous VMs keep disks, markers, slots isolated
+6. **holytoy** — live recompile self-test, fixed-point math check,
+   per-frame shading-time readout
+7. **glsl-app** — a `.glsl` file compiles in-guest and animates in the app
+8. **mouse** — QMP mouse injection lands on a pixel (±16) and clicks
+9. **dither** — static GLSL gradient is deterministic and spatially
+   dithered with a sane 16-color gamut
+10. **guest-glsl** — raw GLSL renders through the app renderer
+11. **circle** — declarations, vectors, swizzles, constructors, `length`,
+    `step` compile and render centered geometry
+12. **editor** — native in-guest editing auto-compiles; viewport changes
+13. **oracle** — guest visual sample dump matches the committed reference
+14. **smp** — single-core vs multicore render is byte-identical
+15. **sse** — SSE stage-0 probe: enable, execute, XMM survival
+16. **bilerp** — 1:16 bilinear upsample of a linear shader equals 1:1
+17. **pal** — adaptive palette is deterministic, converges, gates off
+
+</details>
 
 ## Credits
 
-- Terry A. Davis — TempleOS, public domain.
+- Terry A. Davis — TempleOS, public domain. An operating system one person
+  wrote, including the compiler this project leans on.
 - [cia-foundation/TempleOS](https://github.com/cia-foundation/TempleOS) —
-  the archived source tree this project reads for ground truth
-  (vendored in `vendor/`).
+  the archived source tree read for ground truth (vendored in `vendor/`).
+- [Reinder Nijhoff](https://reindernijhoff.net/) and
+  [bean_mhm](https://www.shadertoy.com/user/beans_please) — authors of the
+  corpus shaders, preserved from their own backups with licenses and
+  provenance recorded per shader (see `corpus/shadertoy/v2/README.md`).
+  The demo GIF and gallery stills above are derivatives of CC BY-NC-SA 4.0
+  shaders and carry the same license.
+- [Shadertoy](https://www.shadertoy.com) — the original, obviously.
