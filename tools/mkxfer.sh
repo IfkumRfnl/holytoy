@@ -85,6 +85,16 @@ fi
 if [ -n "${HOLYTOY_BILERP:-}" ]; then
     echo "$HOLYTOY_BILERP" | mcopy -o - x:/BILERP.TXT
 fi
+# plan 015 Stage C: HOLYTOY_PAL=fixed|adaptive -> E:/PAL.TXT (scene-adaptive
+# 16-color palette; absent or "fixed" keeps the standard palette, the
+# default). HOLYTOY_PALCHK ("r,g,b r,g,b", 0-255) ships the pal proof's
+# expected scene colors to E:/PALCHK.TXT for the guest's HT PAL self-check.
+if [ -n "${HOLYTOY_PAL:-}" ]; then
+    echo "$HOLYTOY_PAL" | mcopy -o - x:/PAL.TXT
+fi
+if [ -n "${HOLYTOY_PALCHK:-}" ]; then
+    echo "$HOLYTOY_PALCHK" | mcopy -o - x:/PALCHK.TXT
+fi
 # Visual-oracle dump request: HT.HC writes V00A/V00B sample DATs after a
 # successful single-shader GLSL compile (plan 010).
 if [ -n "${HOLYTOY_VISDUMP:-}" ]; then

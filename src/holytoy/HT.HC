@@ -285,6 +285,13 @@ Bool HtInstallHoly(U8 *holy)
       //it only APPENDS new JITed code; workers keep using the old ht_fp.
       HtRenderPause;
       ht_fp=ht_new_fp;
+      //plan 015 Stage C: palette history never crosses shaders (mirrors
+      //HtScaleReset). Resetting to the deterministic seed inside the paused
+      //window makes the adaptive palette's evolution a pure function of the
+      //NEW shader's frames - two runs converge identically no matter how
+      //many default-shader frames published before the swap.
+      if (htr_pal_mode)
+        HtrPalReset;
       HtRenderResume;
       HtStatus(FALSE,"OK  GLSL compiled (%d HolyC bytes)",n);
     } else {
@@ -370,15 +377,29 @@ U0 HtShadeBand(CHtBandDesc *d)
  //band decomposition and core count (proof 14). Concurrent stores of those
  //identical boundary values into ht_cgrid are benign (same aligned words),
  //and a band only ever READS corner rows it wrote itself.
+ //plan 015 Stage C (adaptive palette): when htr_pal_mode is on, piggyback a
+ //3:3:3 RGB histogram (count + 8.16 sums) of this band's PRE-quantization
+ //samples into the band's OWN slot of htr_pal_hist (reset here; no shared
+ //mutable state across workers). Sample-set contract for decomposition
+ //invariance: the bilerp corner pass accumulates corner rows [y0,y1) only -
+ //the recomputed shared boundary row [y1] is skipped, so the union over all
+ //bands counts every corner row 0..nby-1 exactly once regardless of band
+ //count (the frame's last corner row is deliberately never counted); the
+ //flood path's block rows are disjoint already. The fixed path (mode off)
+ //takes none of these branches.
   I64 bx,by,i,j,r88,g88,b88,rr,gg,bb,o,r5,g5,b5,x0,y,v;
   I64 sh,cshift,crnd,s2,c00r,c00g,c00b,c10r,c10g,c10b,
       c01r,c01g,c01b,c11r,c11g,c11b,vlr,vlg,vlb,vrr,vrg,vrb,
       nr,ng,nb2,sr,sg,sb,wy,wym;
   I64 scale=d->scale,nbx=d->nbx,vh=d->vh,pl=d->pix_left,pt=d->pix_top;
   U8 *pix=ht_fb[d->fb_idx].pix,*p;
-  I64 *cr0,*cr1;
+  I64 *cr0,*cr1,*hh=NULL,hr,hg,hb,hbin;
   F64 cx,cy;
   CHtFragColor fc;
+  if (htr_pal_mode && htr_pal_hist && d->band<HTR_PAL_BANDS) {
+    hh=&htr_pal_hist[d->band*(HTR_PAL_BINS*4)];
+    MemSet(hh,0,HTR_PAL_BINS*4*sizeof(I64));
+  }
   if (ht_bilerp && scale>1 && ht_cgrid) {
     //Corner pass: one sample per block corner, stored as 8.16 fixed point
     //(trunc like the 8.8 path; clamp [0,65536] so the lerp stays in range).
@@ -398,6 +419,19 @@ U0 HtShadeBand(CHtBandDesc *d)
         v=ToI64(fc.b*65536.0);
         if (v<0) v=0; else if (v>65536) v=65536;
         cr0[(bx*3)+2]=v;
+        if (hh && by<d->y1_blk) {
+          hr=cr0[(bx*3)+0]>>13;
+          if (hr>7) hr=7;
+          hg=cr0[(bx*3)+1]>>13;
+          if (hg>7) hg=7;
+          hb=v>>13;
+          if (hb>7) hb=7;
+          hbin=((hr<<6)+(hg<<3)+hb)*4;
+          hh[hbin]++;
+          hh[hbin+1]+=cr0[(bx*3)+0];
+          hh[hbin+2]+=cr0[(bx*3)+1];
+          hh[hbin+3]+=v;
+        }
       }
     }
     //Pixel pass: N accumulates the bilinear numerator (denominator
@@ -464,6 +498,19 @@ U0 HtShadeBand(CHtBandDesc *d)
       if (r88<0) r88=0; else if (r88>256) r88=256;
       if (g88<0) g88=0; else if (g88>256) g88=256;
       if (b88<0) b88=0; else if (b88>256) b88=256;
+      if (hh) {
+        hr=r88>>5;
+        if (hr>7) hr=7;
+        hg=g88>>5;
+        if (hg>7) hg=7;
+        hb=b88>>5;
+        if (hb>7) hb=7;
+        hbin=((hr<<6)+(hg<<3)+hb)*4;
+        hh[hbin]++;
+        hh[hbin+1]+=(r88<<8);
+        hh[hbin+2]+=(g88<<8);
+        hh[hbin+3]+=(b88<<8);
+      }
       rr=r88*31;
       gg=g88*31;
       bb=b88*31;
@@ -652,12 +699,20 @@ U0 HtRenderTask(U8 *ignored)
           ok=FALSE;		//a band faulted: keep the last-good front buffer
       ht_shade_ms=ToI64((tS-t0)*1000.0);
     }
-    LBtr(&ht_render_busy,0);
     if (ok) {
       ht_front_idx=ht_back_idx;	//PUBLISH: single aligned word store (atomic)
       ht_back_idx=ht_back_idx^1;
       ht_have_frame=TRUE;
+      //plan 015 Stage C: adaptive palette update at the publish point,
+      //INSIDE the busy window (moved ahead of the LBtr release) so pausers
+      //(shader swap -> HtrPalReset) can never race the histogram merge,
+      //k-means, DAC program or in-place htr_lut rebuild. All workers have
+      //drained the JobResGet barrier; core 0 owns everything here. Merge
+      //order is fixed band-index order regardless of core count.
+      if (htr_pal_mode)
+        HtrPalFrame(nbands);
     }
+    LBtr(&ht_render_busy,0);
     HtScaleController(ht_shade_ms);
     pace=33-ht_shade_ms;	//pace to ~30 fps; also a guaranteed yield point
     if (pace<1)
@@ -1033,6 +1088,81 @@ corpus_next:;
   HtRenderResume;		//resume background render for the final frame
 }
 
+U0 HtPalSelfCheck()
+{//plan 015 Stage C proof (17): after the headless GLSL run has published
+ //~90 adaptive frames (Sleep(3000) at ~30fps; a static scene converges and
+ //snaps in ~40), assert (a) the 6 reserved DAC entries still hold the
+ //standard palette (GrPaletteColorGet vs gr_palette_std, top 6 bits - the
+ //readback reconstruction is lossless at 6 bits), (b) every adaptive entry
+ //was programmed and the hardware DAC matches the tracked htr_pal_dac
+ //state, and (c) at least 6 of the 10 adaptive entries sit within a small
+ //distance of an expected scene color from E:/PALCHK.TXT ("r,g,b r,g,b",
+ //0-255). Prints exactly one "HT PAL OK ..." line on success; the
+ //PAL=fixed negative run never reaches this (caller gates on htr_pal_mode).
+  U8 *buf,*pp;
+  I64 sz,i,j,k=0,exp[6],e6[6],dr,dg,db,d2,best,near_cnt=0;
+  Bool resv_ok=TRUE,prog_ok=TRUE;
+  CBGR48 got,std;
+  buf=FileRead("E:/PALCHK.TXT",&sz);
+  if (!buf) {
+    "HT PAL FAIL no PALCHK\n";
+    return;
+  }
+  pp=buf;
+  while (*pp && k<6) {
+    if ('0'<=*pp<='9') {
+      exp[k]=0;
+      while ('0'<=*pp<='9') {
+        exp[k]=(exp[k]*10)+(*pp-'0');
+        pp++;
+      }
+      k++;
+    } else
+      pp++;
+  }
+  Free(buf);
+  if (k<6) {
+    "HT PAL FAIL PALCHK parse %d\n",k;
+    return;
+  }
+  for (i=0;i<6;i++)
+    e6[i]=ToI64((exp[i]*63.0/255.0)+0.5);
+  for (i=0;i<HTR_PAL_ANCH;i++) {
+    j=htr_pal_resv[i];
+    got=GrPaletteColorGet(j);
+    std=gr_palette_std[j];
+    if ((got.r>>10)!=(std.r>>10) || (got.g>>10)!=(std.g>>10) ||
+        (got.b>>10)!=(std.b>>10))
+      resv_ok=FALSE;
+  }
+  for (j=0;j<HTR_PAL_K;j++) {
+    if (htr_pal_dac[(j*3)+0]<0) {
+      prog_ok=FALSE;
+      goto palchk_next;
+    }
+    got=GrPaletteColorGet(htr_pal_idx[j]);
+    if ((got.r>>10)!=htr_pal_dac[(j*3)+0] ||
+        (got.g>>10)!=htr_pal_dac[(j*3)+1] ||
+        (got.b>>10)!=htr_pal_dac[(j*3)+2])
+      prog_ok=FALSE;
+    best=99999;
+    for (i=0;i<2;i++) {
+      dr=htr_pal_dac[(j*3)+0]-e6[(i*3)+0];
+      dg=htr_pal_dac[(j*3)+1]-e6[(i*3)+1];
+      db=htr_pal_dac[(j*3)+2]-e6[(i*3)+2];
+      d2=(dr*dr)+(dg*dg)+(db*db);
+      if (d2<best) best=d2;
+    }
+    if (best<=48)
+      near_cnt++;
+palchk_next:;
+  }
+  if (resv_ok && prog_ok && near_cnt>=6)
+    "HT PAL OK near=%d resv=1 prog=1\n",near_cnt;
+  else
+    "HT PAL FAIL near=%d resv=%d prog=%d\n",near_cnt,resv_ok,prog_ok;
+}
+
 U8 *HtEditorSave(CDoc *doc)
 {//DocSave otherwise serializes its temporary cursor marker. Hide it only
  //for the snapshot; the native editor cursor remains enabled for display.
@@ -1274,12 +1404,36 @@ if (FileFind("E:/BILERP.TXT")) {
     Free(blb);
   }
 }
+//plan 015 Stage C: HOLYTOY_PAL=fixed|adaptive -> E:/PAL.TXT. "adaptive"
+//retargets the 10 non-reserved DAC entries at the scene (HTRENDER.HC
+//module); absent, "fixed" or junk keeps the standard palette (default).
+//Adaptive engages ONLY for single-shader GLSL runs and GUI sessions: the
+//self-test and the corpus batch validate the fixed quantizer/oracle and
+//must never see an adapted DAC or a rebuilt htr_lut (plan 015 Stage C).
+if (FileFind("E:/PAL.TXT")) {
+  U8 *palb;
+  I64 palsz;
+  palb=FileRead("E:/PAL.TXT",&palsz);
+  if (palb) {
+    if (palsz>0 && palb[0]=='a') {
+      if (!FileFind("E:/CORPUS.TXT") &&
+          (ht_gui || FileFind("E:/SHADER.GLS"))) {
+        htr_pal_mode=1;
+        "HT PAL ADAPTIVE\n";
+      } else
+        "HT PAL IGNORED\n";
+    }
+    Free(palb);
+  }
+}
 StrCpy(ht_glsl_src,ht_glsl1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
 ht_default_fp=ht_fp;
 HTMInit;			//build the LUT once, before any F3/GLSL shading
 HTRInit;			//build the palette LUT and Bayer offsets once
+if (htr_pal_mode)
+  HtrPalInit;			//plan 015 Stage C: histogram slots + seed
 HtLibInit;			//F64 sine table for generated shader code
 HtF32Init;			//plan 013: fold Cephes-F32 sin/cos constants
 ht_u.click_x=-1;
@@ -1322,12 +1476,14 @@ if (FileFind("E:/CORPUS.TXT")) {
   ht_had_shader=HtLoadGlsl();
   if (ht_gui)
     HtInteract;			//shader (if any) already live in the viewport
-  else if (ht_had_shader)
+  else if (ht_had_shader) {
     Sleep(3000);		//headless GLSL mode: just let the rolling
 				//screendumps capture the animating shader;
 				//the recompile markers are the no-shader
 				//run's job (keep the two modes separate)
-  else
+    if (htr_pal_mode && FileFind("E:/PALCHK.TXT"))
+      HtPalSelfCheck;		//plan 015 Stage C proof marker (HT PAL ...)
+  } else
     HtSelfTest;
 }
 //plan 012 teardown. Only on GUI exit (ESC): HtInteract already popped our

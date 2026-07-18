@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# holytoy proof suite. Fifteen round-trips through the real VM:
+# holytoy proof suite. Seventeen round-trips through the real VM:
 #   1. smoke        guest marker round-trip
 #   2. gradient     screenshot dimensions and colors
 #   3. error        guest compiler failure surfaces as exit 1
@@ -16,6 +16,7 @@
 #  14. smp          single-core vs multicore render is byte-identical
 #  15. sse          stage-0 SSE probe: enable + execute + XMM survival + sweep
 #  16. bilerp       1:16 bilinear upsample of a linear shader equals 1:1
+#  17. pal          adaptive palette: deterministic, converges, gated off
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -488,6 +489,48 @@ if [ -n "$HASH_B1" ] && [ -n "$HASH_B16" ] && [ -n "$HASH_B16OFF" ] &&
     ok "bilerp: 1:16 bilerp viewport $HASH_B16 == 1:1, and OFF differs"
 else
     bad "bilerp: 1:1 '$HASH_B1' vs 16-on '$HASH_B16' vs 16-off '$HASH_B16OFF' (runs $RD_B1 $RD_B16 $RD_B16OFF)"
+fi
+
+# 17. pal: plan-015 Stage C scene-adaptive palette. A static two-tone scene
+# (left deep orange, right deep teal - both far from the standard 16) runs
+# twice with HOLYTOY_PAL=adaptive at different shading-core counts:
+# (a) determinism - both viewports hash identical (the palette is a pure
+#     function of frame content: fixed band merge order, no wall clock, and
+#     CORES=1 vs CORES=4 must not change a byte, extending proof 14);
+# (b) convergence - the guest's own HT PAL OK line (reserved DAC entries
+#     still standard, all 10 adaptive entries programmed and matching the
+#     hardware DAC readback, >=6 within threshold of the two scene colors);
+# (c) negative - a HOLYTOY_PAL=fixed run prints NO HT PAL marker and renders
+#     a DIFFERENT viewport (proves adaptive engaged and the gate works).
+PALCHK="230,89,13 13,128,115"
+RD_PA1="$(new_run_path pal-adaptive-c1)"
+RD_PA4="$(new_run_path pal-adaptive-c4)"
+RD_PFX="$(new_run_path pal-fixed)"
+HASH_PA1=""
+HASH_PA4=""
+HASH_PFX=""
+if HOLYTOY_PAL=adaptive HOLYTOY_PALCHK="$PALCHK" HOLYTOY_CORES=1 \
+       RUN_DIR="$RD_PA1" tools/run.sh tests/glsl/two-tone.glsl &&
+   grep -q "HT PAL ADAPTIVE" "$RD_PA1/guest.log" &&
+   grep -q "HT PAL OK" "$RD_PA1/guest.log"; then
+    HASH_PA1="$(smp_viewport_hash "$RD_PA1")"
+fi
+if HOLYTOY_PAL=adaptive HOLYTOY_PALCHK="$PALCHK" HOLYTOY_CORES=4 \
+       RUN_DIR="$RD_PA4" tools/run.sh tests/glsl/two-tone.glsl &&
+   grep -q "HT PAL OK" "$RD_PA4/guest.log"; then
+    HASH_PA4="$(smp_viewport_hash "$RD_PA4")"
+fi
+if HOLYTOY_PAL=fixed HOLYTOY_PALCHK="$PALCHK" \
+       RUN_DIR="$RD_PFX" tools/run.sh tests/glsl/two-tone.glsl &&
+   grep -q "HT GUEST GLSL OK" "$RD_PFX/guest.log" &&
+   ! grep -q "HT PAL" "$RD_PFX/guest.log"; then
+    HASH_PFX="$(smp_viewport_hash "$RD_PFX")"
+fi
+if [ -n "$HASH_PA1" ] && [ -n "$HASH_PA4" ] && [ -n "$HASH_PFX" ] &&
+   [ "$HASH_PA1" = "$HASH_PA4" ] && [ "$HASH_PA1" != "$HASH_PFX" ]; then
+    ok "pal: adaptive deterministic viewport $HASH_PA1 (c1==c4), HT PAL OK, fixed differs"
+else
+    bad "pal: adaptive-c1 '$HASH_PA1' vs adaptive-c4 '$HASH_PA4' vs fixed '$HASH_PFX' (runs $RD_PA1 $RD_PA4 $RD_PFX)"
 fi
 
 echo "-- $PASS passed, $FAIL failed --"
