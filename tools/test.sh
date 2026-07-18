@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# holytoy proof suite. Fourteen round-trips through the real VM:
+# holytoy proof suite. Fifteen round-trips through the real VM:
 #   1. smoke        guest marker round-trip
 #   2. gradient     screenshot dimensions and colors
 #   3. error        guest compiler failure surfaces as exit 1
@@ -14,6 +14,7 @@
 #  12. editor       native in-guest edit auto-compiles and changes the viewport
 #  13. oracle       guest visual sample dump matches the committed reference
 #  14. smp          single-core vs multicore render is byte-identical
+#  15. sse          stage-0 SSE probe: enable + execute + XMM survival + sweep
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -436,6 +437,23 @@ if [ -n "$HASH_C1" ] && [ -n "$HASH_C4" ] && [ "$HASH_C1" = "$HASH_C4" ]; then
     ok "smp: CORES=1 and CORES=4 produced identical viewport $HASH_C1"
 else
     bad "smp: viewport hash mismatch (cores1 '$HASH_C1' vs cores4 '$HASH_C4'; runs $RD_C1 $RD_C4)"
+fi
+
+# 15. sse: plan-015 stage-0 SSE enablement probe. CR4.OSFXSR|OSXMMEXCPT set
+# per core + MXCSR pinned to 0x1F80, raw-encoded scalar SSE executes on core
+# 0 and an AP, an XMM sentinel survives task switches against an active
+# clobber task, and the ADDSS/MULSS/SUBSS/DIVSS/SQRTSS bit sweep matches the
+# HtF32 reference (MISMATCH==0). The probe prints HT SSE OK only then.
+RD="$(new_run_path sse)"
+if RUN_DIR="$RD" tools/run.sh src/probe-sse.HC; then
+    if grep -q "HT SSE OK" "$RD/guest.log"; then
+        ok "sse: enable + execute + XMM survival + bit sweep (HT SSE OK)"
+    else
+        bad "sse: no HT SSE OK marker (run $RD)"
+    fi
+else
+    RC=$?
+    bad "sse: run.sh exited $RC (run $RD)"
 fi
 
 echo "-- $PASS passed, $FAIL failed --"
