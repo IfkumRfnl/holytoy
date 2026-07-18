@@ -16,10 +16,15 @@ QEMU=qemu-system-x86_64
 MEM=512
 MAX_RUNS=3                # concurrent VMs; each uses MEM MiB and ~1 TCG core
 RUN_QUEUE_TIMEOUT=300     # wait this long for any VM slot
-SMP=4                     # guest vCPUs; TempleOS is SMP (core 0 owns the
-                          # winmgr, cores 1+ compute via Spawn target_cpu)
+SMP="${HOLYTOY_SMP:-8}"   # guest vCPUs (env override HOLYTOY_SMP; plan 015).
+                          # 8 = this host's WSL2 logical CPU count. TempleOS
+                          # is SMP (core 0 owns the winmgr, cores 1+ compute
+                          # via Spawn target_cpu).
                           # HOLYTOY_CORES=1..$SMP|auto pins how many cores the
                           # plan-012 background render task shades on (E:/CORES.TXT)
+                          # NOTE: MAX_RUNS=3 concurrent 8-vCPU VMs oversubscribe
+                          # this 8-logical-CPU host; fine for proofs, but do solo
+                          # runs (or HOLYTOY_SMP=4) for perf measurements.
 ACCEL_ARGS="-smp $SMP"
 [ -e /dev/kvm ] && [ -w /dev/kvm ] && ACCEL_ARGS="-enable-kvm -smp $SMP"
 

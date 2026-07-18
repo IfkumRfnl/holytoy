@@ -114,7 +114,12 @@ class CHtBandDesc
 {//one contiguous block-row band handed to a worker (or shaded inline).
   I64 band,y0_blk,y1_blk,nbx,vh,fb_idx,scale,pix_left,pix_top;
 };
-CHtBandDesc ht_desc[MP_PROCESSORS_NUM];
+//plan 015 Stage B: band oversubscription. The multicore fan-out hands
+//M=min(nby,4*(cores-1)) small contiguous bands round-robin to the workers
+//instead of one big band each, so a worker that finishes a cheap band (sky)
+//picks up the next expensive one (temple) instead of idling at the barrier.
+#define HT_BANDS_MAX	64	//static band-descriptor ceiling
+CHtBandDesc ht_desc[HT_BANDS_MAX];
 
 U0 HtRenderPause()
 {//Quiesce the render task before touching long-lived shared state (ht_fp
@@ -530,7 +535,7 @@ U0 HtRenderTask(U8 *ignored)
  //keep core 0 while workers shade on cores 1..nb.
   I64 nb,k,cores,vw,vh,nbx,nby,scale,pl,pt,nbands,y0,y1,pace;
   Bool ok;
-  CJob *jobs[MP_PROCESSORS_NUM];
+  CJob *jobs[HT_BANDS_MAX];
   CHtFrameBuf *fb;
   F64 t0,bt,acc;
   while (TRUE) {
@@ -604,11 +609,21 @@ U0 HtRenderTask(U8 *ignored)
       }
       ht_shade_ms=ToI64(acc*1000.0);
     } else {
-      //Static contiguous row-bands, one per worker core (cores 1..nb): band
-      //boundaries are 64-aligned (fb_stride is), so writes never false-share.
-      for (k=0;k<nb;k++) {
-        y0=nby*k/nb;
-        y1=nby*(k+1)/nb;
+      //plan 015 Stage B: contiguous row-bands, M=min(nby,4*(cores-1)) small
+      //bands handed round-robin across worker cores 1..nb (JobQue keeps a
+      //FIFO per core), so a worker that drains a cheap band picks up the
+      //next one instead of idling at the barrier behind the slowest band.
+      //Band boundaries stay whole block rows => whole 64-aligned fb rows
+      //(fb_stride is), so writes never false-share. Byte-identical output
+      //across band counts/core counts by construction: disjoint block rows,
+      //deterministic ht_fp, per-band corner recompute (proof 14).
+      nbands=4*nb;
+      if (nbands>nby) nbands=nby;
+      if (nbands>HT_BANDS_MAX) nbands=HT_BANDS_MAX;
+      if (nbands<1) nbands=1;
+      for (k=0;k<nbands;k++) {
+        y0=nby*k/nbands;
+        y1=nby*(k+1)/nbands;
         ht_desc[k].band=k;
         ht_desc[k].y0_blk=y0;
         ht_desc[k].y1_blk=y1;
@@ -620,9 +635,9 @@ U0 HtRenderTask(U8 *ignored)
         ht_desc[k].pix_top=pt;
       }
       t0=tS;
-      for (k=0;k<nb;k++)
-        jobs[k]=JobQue(&HtShadeBandJob,&ht_desc[k],1+k,0);
-      for (k=0;k<nb;k++)
+      for (k=0;k<nbands;k++)
+        jobs[k]=JobQue(&HtShadeBandJob,&ht_desc[k],1+(k%nb),0);
+      for (k=0;k<nbands;k++)
         if (!JobResGet(jobs[k]))
           ok=FALSE;		//a band faulted: keep the last-good front buffer
       ht_shade_ms=ToI64((tS-t0)*1000.0);
