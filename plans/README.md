@@ -30,6 +30,7 @@ deliberately left unplanned, folding in the deferred mouse-injection finding.
 | 012  | SMP background render task: shading off draw_it, JobQue fan-out across cores 1-3, double buffer, proof 14 | P1 | L | 011 | DONE (merged `fb7a54f` 2026-07-17; 14/14 proofs incl. proof 14 CORES=1==CORES=4; 3.16-3.17x measured on 3 workers; corpus unchanged) |
 | 013  | F32 semantics: bit-reproduce llvmpipe (RNE rounding + Cephes-F32 sin) to converge the hash-idiom visual FAILs | P1 | L | 011 | DONE (merged `1eb26f1` 2026-07-17; visual 28/39 -> 32/39 zero regressions, exec 39/39 deterministic; remaining 7 = chaotic iterative, distribution-metric follow-up recorded in plan) |
 | 014  | Hardware F32 via x87 precision control (PC24): drop the per-op software-rounding calls (13.3 -> 2.4 ns/op) | P1 | M/L | 013 | DONE (14/14 proofs incl. HT PC24 OK; corpus visual 32/39 zero regressions, DATs byte-stable; Greek Temple workload 734 -> 165 ms/frame at 1:16, 4.5x; HOLYTOY_HWF32=0 sw fallback verified) |
+| 015  | Viewport quality + scaling: bilinear corner-sample upsample, SMP=8 + band oversubscription, scene-adaptive palette, SSE stage-0 probe | P1 | L | 014 | IN PROGRESS (dispatched 2026-07-18; A+B executor, D executor parallel; C after A+B merge) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
