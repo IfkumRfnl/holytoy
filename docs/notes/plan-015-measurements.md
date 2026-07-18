@@ -1,4 +1,4 @@
-# Plan 015 Stages A+B measurements (bilerp upsample + SMP=8/oversubscription)
+# Plan 015 measurements (bilerp upsample, SMP=8/oversubscription, adaptive palette)
 
 Measured 2026-07-18 on branch `advisor/015-ab-bilerp-smp`. Host:
 i5-13450HX (10c/16t; WSL2 shows 8 logical CPUs), KVM, solo runs. The perf
@@ -84,3 +84,68 @@ Takeaways:
   `run-20260718-012927-mjLyvO` (pre-tuning) vs main baseline
   `run-20260718-013022-LxCrO6`: **all 78 guest V-DAT md5s byte-identical**
   — the oracle path is untouched by construction and in fact.
+
+## Stage C: scene-adaptive palette (measured 2026-07-18, branch `advisor/015-c-adaptive-palette`)
+
+Gate `HOLYTOY_PAL=fixed|adaptive` -> `E:/PAL.TXT`, **default fixed**;
+adaptive engages only for single-shader GLSL runs and GUI sessions (never
+in HtSelfTest/HtCorpusRun). Reserved DAC entries {0,7,10,12,14,15} keep the
+standard palette; {1,2,3,4,5,6,8,9,11,13} adapt (per-band 3:3:3 histogram
+piggybacked on HtShadeBand, fixed band-order merge at the publish point,
+warm-started weighted k-means k=10 with the 6 reserved entries as immovable
+anchors, luminance-ordered centroids, alpha=0.15 smoothing with exact snap,
+DAC+`htr_lut` reprogrammed together at most every 8 frames on 6-bit change
+only, adaptive entries re-asserted every published frame, full state reset
+on shader swap).
+
+### Proofs (17/17) and determinism
+
+- `make test`: **17 passed, 0 failed** (16 pre-existing + new pal proof).
+- **Fixed path byte-identical to main**: proof 9 dither hash, proof 14
+  C1==C4 hash and proof 16 bilerp hash all still
+  `467019008aeb600eb34e1780064c8701` — the exact pre-change value, so
+  PAL=fixed output did not move by a byte.
+- **Pal proof** (`test-20260718-021547-*-pal-*`): two-tone fixture
+  (`tests/glsl/two-tone.glsl`, deep orange 0.9/0.35/0.05 + deep teal
+  0.05/0.5/0.45) with `HOLYTOY_PAL=adaptive`; CORES=1 and CORES=4 runs both
+  print the guest self-check marker `HT PAL OK near=10 resv=1 prog=1`
+  (all 10 adaptive entries within DAC distance^2<=48 of a scene color,
+  reserved entries verified standard AND hardware-readback-matched via
+  GrPaletteColorGet) and hash to the same converged viewport
+  `c339d0d6b5ee2ce596ba63fca20fba11`; the PAL=fixed negative run prints no
+  HT PAL marker and hashes differently. An earlier CORES=auto(8) spot run
+  (`run-20260718-020933-gOK7cl`) converged to the same hash — three core
+  counts, one output.
+- Convergence: viewport hash stable from rolling frame 4 of 10 (~1.3 s);
+  region-mean color probes on the animated spot-checks show a monotone
+  ramp then lock (Outrun sky pins at 0090ff from frame 3) — no palette
+  flicker observed in any captured sequence.
+
+### Corpus (defaults: PAL absent => fixed)
+
+- Branch corpus run `run-20260718-021647-2uCHZ5`: stratum A compile/exec
+  **39/39**, visual **32/39** (same 7 chaotic FAILs, identical per-shader
+  scores, e.g. XdsGWH 39.83/25.5%). Fresh main baseline (150e97b)
+  `run-20260718-021844-HVcz0K`: **all 78 V-DAT md5s byte-identical** to
+  the branch run — no adaptive leak into the oracle or batch paths.
+
+### Visual spot-checks (adaptive vs fixed, PNGs in `out/plan015c-spot/`)
+
+| scene | verdict | evidence |
+|---|---|---|
+| two-tone fixture | clearly better (solid true-color halves vs flat-gray teal + dithered brown) | `twotone-{adaptive,fixed}.png` |
+| the local heavyweight workload, pinned 1:16 | clearly better (warm dusk stone/sky vs near-grayscale with harsh red patches) | `temple-{adaptive,fixed}-s16.png`; runs `run-20260718-021957-AnLoe4` / `run-20260718-022017-O1GHIx` |
+| Mdf3Dr Outrun | clearly better (real light-blue sky, soft warm grays vs cyan sky + fringing) | `outrun-{adaptive,fixed}.png` |
+| DtSfzR Beach | clearly better (smooth cream->deep-blue gradient vs white/gray/cyan banding) | `beach-{adaptive,fixed}.png` |
+| 3dfGR2 Cornell Box | better (red/green walls read; fixed is almost all gray) | `cornell-{adaptive,fixed}.png` |
+
+### Cost
+
+Local heavyweight workload, solo, pinned 1:16, SMP=8 defaults: pane
+shading readout adaptive **median 132 ms (116-145, n=6)** vs fixed
+**median 130 ms (111-174, n=9)** — the shading loop is unchanged and the
+delta is inside the animated shader's per-frame variance. The core-0
+palette work (merge + k-means every frame, LUT rebuild 2-4 ms at most
+every 8 frames and only until the scene converges) sits outside the
+measured fan-out window; FPS readout stayed 29-30 in all adaptive
+captures.
