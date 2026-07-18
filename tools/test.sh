@@ -15,6 +15,7 @@
 #  13. oracle       guest visual sample dump matches the committed reference
 #  14. smp          single-core vs multicore render is byte-identical
 #  15. sse          stage-0 SSE probe: enable + execute + XMM survival + sweep
+#  16. bilerp       1:16 bilinear upsample of a linear shader equals 1:1
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/config.sh"
@@ -454,6 +455,39 @@ if RUN_DIR="$RD" tools/run.sh src/probe-sse.HC; then
 else
     RC=$?
     bad "sse: run.sh exited $RC (run $RD)"
+fi
+
+# 16. bilerp: bilinear reconstruction of a fragCoord-LINEAR shader (the
+# static gradient) at pinned 1:16 with bilerp ON matches the pinned 1:1
+# center-sampled rendering byte-for-byte in the viewport (bilinear
+# reconstruction of a linear function is exact under identical quantization;
+# plan 015 Stage A). Negative check: bilerp OFF at 1:16 must NOT match 1:1
+# (the per-block flood fill), proving the comparison can fail.
+RD_B1="$(new_run_path bilerp-1to1)"
+RD_B16="$(new_run_path bilerp-16-on)"
+RD_B16OFF="$(new_run_path bilerp-16-off)"
+HASH_B1=""
+HASH_B16=""
+HASH_B16OFF=""
+if HOLYTOY_SCALE=1 RUN_DIR="$RD_B1" tools/run.sh tests/glsl/gradient.glsl &&
+   grep -q "HT GUEST GLSL OK" "$RD_B1/guest.log"; then
+    HASH_B1="$(smp_viewport_hash "$RD_B1")"
+fi
+if HOLYTOY_SCALE=16 RUN_DIR="$RD_B16" tools/run.sh tests/glsl/gradient.glsl &&
+   grep -q "HT GUEST GLSL OK" "$RD_B16/guest.log"; then
+    HASH_B16="$(smp_viewport_hash "$RD_B16")"
+fi
+if HOLYTOY_BILERP=0 HOLYTOY_SCALE=16 RUN_DIR="$RD_B16OFF" \
+       tools/run.sh tests/glsl/gradient.glsl &&
+   grep -q "HT GUEST GLSL OK" "$RD_B16OFF/guest.log" &&
+   grep -q "HT BILERP OFF" "$RD_B16OFF/guest.log"; then
+    HASH_B16OFF="$(smp_viewport_hash "$RD_B16OFF")"
+fi
+if [ -n "$HASH_B1" ] && [ -n "$HASH_B16" ] && [ -n "$HASH_B16OFF" ] &&
+   [ "$HASH_B16" = "$HASH_B1" ] && [ "$HASH_B16OFF" != "$HASH_B1" ]; then
+    ok "bilerp: 1:16 bilerp viewport $HASH_B16 == 1:1, and OFF differs"
+else
+    bad "bilerp: 1:1 '$HASH_B1' vs 16-on '$HASH_B16' vs 16-off '$HASH_B16OFF' (runs $RD_B1 $RD_B16 $RD_B16OFF)"
 fi
 
 echo "-- $PASS passed, $FAIL failed --"
