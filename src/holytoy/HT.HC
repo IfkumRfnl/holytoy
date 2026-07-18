@@ -80,6 +80,25 @@ I64 ht_scale_slow=0,ht_scale_fast=0;	//controller consecutive frames
 //uniforms, identical integer/F64 math). See plans/012-smp-background-render.md
 //and the ht_fp reentrancy contract above.
 #define HT_FB_MAXW	1024	//palette-index row stride ceiling (>= any viewport)
+//plan 015 Stage A: bilinear corner-sample upsample (display only). Bands
+//shade an (nbx+1)x(nby+1) grid of block CORNERS (fragCoord x=bx*scale,
+//y=vh-by*scale) into ht_cgrid as 8.16 fixed-point RGB, then every pixel is
+//an integer bilinear lerp of its 4 surrounding corners with CENTER-aligned
+//weights (2j+1)/(2*scale),(2i+1)/(2*scale), followed by the UNCHANGED
+//per-pixel Bayer offset + htr_lut quantization. The center weights + 8.16
+//corners + a +4*scale^2 rounding bias make the reconstruction of a shader
+//linear in fragCoord byte-identical to the 1:1 center-sampling path (proof
+//15; host-verified: r88=(N+4s^2)>>(2*log2(s)+10) underestimates the exact
+//center value by <1/256 and the bias recovers the floor). scale==1 keeps
+//the EXACT pre-015 path; E:/BILERP.TXT "0" (HOLYTOY_BILERP=0) reverts to
+//the pre-015 flood fill byte-for-byte. The visual oracle (HtVisualDump) is
+//untouched by construction: it never reads ht_cgrid or the framebuffer.
+//Grid sized for the worst case bilerp reaches (scale>=2):
+//(HT_FB_MAXW/2+1) x (HT_VIEW_H/2+1) corners, 3 I64 channels (~1.8 MB).
+#define HT_CG_STRIDE	513	//corner columns ceiling: HT_FB_MAXW/2+1
+#define HT_CG_ROWS	145	//corner rows ceiling: HT_VIEW_H/2+1
+I64 ht_bilerp=1;		//display upsample gate; default ON
+I64 *ht_cgrid=NULL;		//corner grid scratch, allocated once at startup
 class CHtFrameBuf { CHtUniforms snap; U8 *pix; U8 *pix_raw; };
 CHtFrameBuf ht_fb[2];		//double buffer: front (shown) + back (in work)
 I64 ht_fb_stride=HT_FB_MAXW;	//64-aligned row stride into fb->pix
@@ -338,10 +357,97 @@ U0 HtShadeBand(CHtBandDesc *d)
  //viewport-relative pixels at row stride ht_fb_stride; HtDrawIt copies them
  //to dc->body. Pure/reentrant: reads only its args + read-only LUTs, calls
  //ht_fp (reentrant contract), writes only its disjoint fb rows.
-  I64 bx,by,i,j,r88,g88,b88,rr,gg,bb,o,r5,g5,b5,x0,y;
+ //plan 015 Stage A (bilerp path, scale>1): shade this band's corner rows
+ //[y0_blk,y1_blk] INCLUSIVE into ht_cgrid, then bilinear-fill the pixels.
+ //The shared boundary corner row is recomputed by BOTH neighbor bands -
+ //never handed across in memory - and ht_fp is deterministic (plan 011), so
+ //the duplicate rows are bit-identical: output bytes are independent of the
+ //band decomposition and core count (proof 14). Concurrent stores of those
+ //identical boundary values into ht_cgrid are benign (same aligned words),
+ //and a band only ever READS corner rows it wrote itself.
+  I64 bx,by,i,j,r88,g88,b88,rr,gg,bb,o,r5,g5,b5,x0,y,v;
+  I64 sh,cshift,crnd,s2,c00r,c00g,c00b,c10r,c10g,c10b,
+      c01r,c01g,c01b,c11r,c11g,c11b,vlr,vlg,vlb,vrr,vrg,vrb,
+      nr,ng,nb2,sr,sg,sb,wy,wym;
   I64 scale=d->scale,nbx=d->nbx,vh=d->vh,pl=d->pix_left,pt=d->pix_top;
   U8 *pix=ht_fb[d->fb_idx].pix,*p;
+  I64 *cr0,*cr1;
+  F64 cx,cy;
   CHtFragColor fc;
+  if (ht_bilerp && scale>1 && ht_cgrid) {
+    //Corner pass: one sample per block corner, stored as 8.16 fixed point
+    //(trunc like the 8.8 path; clamp [0,65536] so the lerp stays in range).
+    for (by=d->y0_blk;by<=d->y1_blk;by++) {
+      cr0=&ht_cgrid[(by*HT_CG_STRIDE)*3];
+      cy=vh-(by*scale);
+      for (bx=0;bx<=nbx;bx++) {
+        fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
+        cx=bx*scale;
+        ht_fp(cx,cy,&fc);
+        v=ToI64(fc.r*65536.0);
+        if (v<0) v=0; else if (v>65536) v=65536;
+        cr0[(bx*3)+0]=v;
+        v=ToI64(fc.g*65536.0);
+        if (v<0) v=0; else if (v>65536) v=65536;
+        cr0[(bx*3)+1]=v;
+        v=ToI64(fc.b*65536.0);
+        if (v<0) v=0; else if (v>65536) v=65536;
+        cr0[(bx*3)+2]=v;
+      }
+    }
+    //Pixel pass: N accumulates the bilinear numerator (denominator
+    //4*scale^2*256 after the 8.16->8.8 drop, all powers of two); the inner
+    //loop is one add per channel (horizontal DDA), then the pre-015 Bayer
+    //offset + htr_lut lookup unchanged. r88=(N+crnd)>>cshift lands in
+    //[0,256] by construction (corners clamped), no extra clamp needed.
+    sh=Bsr(scale);
+    cshift=(2*sh)+10;
+    crnd=1<<((2*sh)+2);
+    s2=2*scale;
+    for (by=d->y0_blk;by<d->y1_blk;by++) {
+      cr0=&ht_cgrid[(by*HT_CG_STRIDE)*3];
+      cr1=&ht_cgrid[((by+1)*HT_CG_STRIDE)*3];
+      for (bx=0;bx<nbx;bx++) {
+        c00r=cr0[(bx*3)+0]; c00g=cr0[(bx*3)+1]; c00b=cr0[(bx*3)+2];
+        c10r=cr0[((bx+1)*3)+0]; c10g=cr0[((bx+1)*3)+1]; c10b=cr0[((bx+1)*3)+2];
+        c01r=cr1[(bx*3)+0]; c01g=cr1[(bx*3)+1]; c01b=cr1[(bx*3)+2];
+        c11r=cr1[((bx+1)*3)+0]; c11g=cr1[((bx+1)*3)+1]; c11b=cr1[((bx+1)*3)+2];
+        x0=bx*scale;
+        for (i=0;i<scale;i++) {
+          wy=(2*i)+1;
+          wym=s2-wy;
+          vlr=(c00r*wym)+(c01r*wy);
+          vlg=(c00g*wym)+(c01g*wy);
+          vlb=(c00b*wym)+(c01b*wy);
+          vrr=(c10r*wym)+(c11r*wy);
+          vrg=(c10g*wym)+(c11g*wy);
+          vrb=(c10b*wym)+(c11b*wy);
+          nr=(vlr*(s2-1))+vrr;
+          ng=(vlg*(s2-1))+vrg;
+          nb2=(vlb*(s2-1))+vrb;
+          sr=2*(vrr-vlr);
+          sg=2*(vrg-vlg);
+          sb=2*(vrb-vlb);
+          y=(by*scale)+i;
+          p=&pix[(y*ht_fb_stride)+x0];
+          for (j=0;j<scale;j++) {
+            o=htr_bofs[(((pt+y)&3)*4)+((pl+x0+j)&3)]*31;
+            r5=((((nr+crnd)>>cshift)*31)+o)>>8;
+            g5=((((ng+crnd)>>cshift)*31)+o)>>8;
+            b5=((((nb2+crnd)>>cshift)*31)+o)>>8;
+            if (r5<0) r5=0; else if (r5>31) r5=31;
+            if (g5<0) g5=0; else if (g5>31) g5=31;
+            if (b5<0) b5=0; else if (b5>31) b5=31;
+            p[j]=htr_lut[(r5<<10)+(g5<<5)+b5];
+            nr+=sr;
+            ng+=sg;
+            nb2+=sb;
+          }
+        }
+      }
+    }
+    return;
+  }
   for (by=d->y0_blk;by<d->y1_blk;by++) {
     for (bx=0;bx<nbx;bx++) {
       fc.r=0.0; fc.g=0.0; fc.b=0.0; fc.a=0.0;
@@ -1127,6 +1233,22 @@ if (FileFind("E:/HWF32.TXT")) {
     Free(hwb);
   }
 }
+//plan 015: HOLYTOY_BILERP=0 escape hatch (E:/BILERP.TXT holding "0") turns
+//the bilinear corner-sample upsample off; the display path reverts to the
+//pre-015 per-block flood fill byte-for-byte (the old code is kept intact
+//behind the gate in HtShadeBand). Absent or any other value: bilerp ON.
+if (FileFind("E:/BILERP.TXT")) {
+  U8 *blb;
+  I64 blsz;
+  blb=FileRead("E:/BILERP.TXT",&blsz);
+  if (blb) {
+    if (blsz>0 && blb[0]=='0') {
+      ht_bilerp=0;
+      "HT BILERP OFF\n";
+    }
+    Free(blb);
+  }
+}
 StrCpy(ht_glsl_src,ht_glsl1);
 HtStatus(FALSE,"READY  sample 1 (built-in)");
 ht_fp=&MainImage;
@@ -1158,6 +1280,11 @@ ht_fb[1].pix_raw=MAlloc(ht_fb_need+64);
 ht_fb_base=(ht_fb[1].pix_raw(I64)+63)&(~63);
 ht_fb[1].pix=ht_fb_base(U8 *);
 MemSet(ht_fb[1].pix,0,ht_fb_need);
+//plan 015: corner-grid scratch for the bilerp display path (Stage A). One
+//allocation reused every frame; bands write their own corner rows before
+//reading them, so no init ordering matters (zeroed for hygiene). ~1.8 MB.
+ht_cgrid=MAlloc(HT_CG_ROWS*HT_CG_STRIDE*3*sizeof(I64));
+MemSet(ht_cgrid,0,HT_CG_ROWS*HT_CG_STRIDE*3*sizeof(I64));
 ht_render_task=Spawn(&HtRenderTask,NULL,"HT Render",-1,NULL,0x40000);
 Bool ht_had_shader=FALSE;
 if (FileFind("E:/CORPUS.TXT")) {
@@ -1196,6 +1323,8 @@ if (ht_gui) {
   ht_have_frame=FALSE;
   if (ht_fb[0].pix_raw) Free(ht_fb[0].pix_raw);
   if (ht_fb[1].pix_raw) Free(ht_fb[1].pix_raw);
+  if (ht_cgrid) Free(ht_cgrid);
+  ht_cgrid=NULL;
 }
 if (ht_ac_was_on)
   AutoComplete(ON);

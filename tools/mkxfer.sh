@@ -79,6 +79,12 @@ fi
 if [ "${HOLYTOY_HWF32:-}" = "0" ]; then
     echo 0 | mcopy -o - x:/HWF32.TXT
 fi
+# plan 015: HOLYTOY_BILERP=0|1 -> E:/BILERP.TXT. "0" turns the bilinear
+# corner-sample upsample off (display reverts to per-block flood fill);
+# absent or any other value leaves the default-ON bilerp alone.
+if [ -n "${HOLYTOY_BILERP:-}" ]; then
+    echo "$HOLYTOY_BILERP" | mcopy -o - x:/BILERP.TXT
+fi
 # Visual-oracle dump request: HT.HC writes V00A/V00B sample DATs after a
 # successful single-shader GLSL compile (plan 010).
 if [ -n "${HOLYTOY_VISDUMP:-}" ]; then
