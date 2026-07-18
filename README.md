@@ -200,3 +200,11 @@ and change the viewport before the editor exits.
   The demo GIF and gallery stills above are derivatives of CC BY-NC-SA 4.0
   shaders and carry the same license.
 - [Shadertoy](https://www.shadertoy.com) — the original, obviously.
+
+## License
+
+[MIT](LICENSE) for everything holytoy: the in-guest compiler and app, the
+harness, and the tools. Exceptions keep their own terms: the vendored
+TempleOS sources are public domain, and each corpus shader carries its
+recorded upstream license (CC BY-NC-SA 4.0 or AGPL-3.0 — see
+`corpus/shadertoy/v2/README.md`), which the demo images inherit.
