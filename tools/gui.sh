@@ -43,6 +43,10 @@ echo "RUN_DIR=$RUN_DIR"
     exit 2
 }
 holy_prepare_glsl || exit 1
+# Interactive sessions default to the plan-015 scene-adaptive palette; the
+# harness (run.sh/test.sh/corpus) keeps the fixed palette so proof hashes and
+# scale-comparison proofs stay palette-independent. HOLYTOY_PAL=fixed opts out.
+export HOLYTOY_PAL="${HOLYTOY_PAL:-adaptive}"
 if ! HOLYTOY_GUI=1 "$ROOT/tools/mkxfer.sh" "$XFER" "$SRC"; then
     echo "gui.sh: could not create transfer disk" >&2
     exit 2
