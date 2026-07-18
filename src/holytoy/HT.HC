@@ -617,7 +617,17 @@ U0 HtRenderTask(U8 *ignored)
       //(fb_stride is), so writes never false-share. Byte-identical output
       //across band counts/core counts by construction: disjoint block rows,
       //deterministic ht_fp, per-band corner recompute (proof 14).
-      nbands=4*nb;
+      //MEASURED EXCEPTION (2026-07-18, local heavyweight workload, SMP=8
+      //pinned 1:16): with bilerp ON every band recomputes one shared corner
+      //row, so each extra band adds a full block-row of shader samples;
+      //4x oversubscription made frames SLOWER (148 ms vs 98 ms one-band-
+      //per-worker) while bilerp-OFF oversubscription was a clear win (75 ms
+      //vs 98 ms). Bilerp frames therefore keep one band per worker; the
+      //flood-fill path keeps the full 4x oversubscription.
+      if (ht_bilerp && scale>1)
+        nbands=nb;
+      else
+        nbands=4*nb;
       if (nbands>nby) nbands=nby;
       if (nbands>HT_BANDS_MAX) nbands=HT_BANDS_MAX;
       if (nbands<1) nbands=1;
